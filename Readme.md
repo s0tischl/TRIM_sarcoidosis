@@ -10,17 +10,17 @@ QC-filtering of scRNA-seq cellranger outputs, dimensional reduction, harmony int
 ### sarcoidosis_atac_1.qmd:
 Merging of scATAC-seq cellranger outputs and recalculation of count matrix, dimensional reduction, harmony integration and clustering, Gene activity inference, label transfer from scRNA-seq sata and validation using marker gene activity.
 
-### sarcoidosis_pycistopic.pypi:
+### sarcoidosis_pycistopic.html:
 Pseudobulk-based peak calling and generation of consensus peaks following PyCisTopic vignette. Preparation of a PyCisTopic object for use in SCENIC+.
 
 ### sarcoidosis_atac_2.qmd:
 Re-calculation of count matrix based on consensus peaks generated with PyCisTopic and pseudobulk analysis of annotated cell types.
 
-### scenicplus_rna.pypi:
+### scenicplus_rna.html:
 Preparation of a scRNA-seq anndata object to use in SCENIC+.
 
-### scenicplus.pypi:
-Using the scATAC-seq pycistopic object and the scRNA-seq anndata object to run SCENIC+.
+### bocklab_sarcoidosis.qmd:
+Preparation of public dataset from [Krausgruber et al 2023](https://www.cell.com/immunity/fulltext/S1074-7613(23)00024-9) and pseudobulk analysis of skin macrophages and CD4 T cells.
 
 ### RNA_and_ATAC_visualization.qmd
 Joint RNA/ATAC/SCENIC+ analysis and data visualization for the manuscript.
