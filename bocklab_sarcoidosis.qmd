@@ -1,0 +1,313 @@
+---
+title: "Cutaneous sarcoidosis lesional macrophages"
+author: "Titus Schluter"
+date: last-modified
+format: 
+  html: 
+    toc: true
+    code-fold: show
+    embed-resources: true
+engine: knitr
+editor: source
+---
+
+# Background
+I am checking differential gene expression in lesion/non-lesion macrophages in a scRNA dataset from the Christoph Bock lab in cutaneous sarcoidosis
+
+
+# Downloading raw data
+```{bash, eval = F}
+cd /mnt/4tb-platte/titus/R/bocklab_sarcoidosis_skin
+
+wget https://ftp.ncbi.nlm.nih.gov/geo/series/GSE192nnn/GSE192456/suppl/GSE192456%5FSC%5FGEO%5Fraw%5Fcounts%2Ecsv%2Egz
+wget https://ftp.ncbi.nlm.nih.gov/geo/series/GSE192nnn/GSE192456/suppl/GSE192456%5FSC%5FGEO%5Fcells%2Ecsv%2Egz
+```
+
+# Initialize session
+
+```{r setup}
+# Loading packages.
+library(msigdbr)
+library(Seurat)
+library(grDevices)
+library(ggrepel)
+library(ggh4x)
+library(patchwork)
+library(scDblFinder)
+library(Matrix)
+library(DESeq2)
+library(pheatmap)
+library(stringr)
+library(ggpubr)
+library(HGNChelper)
+library(org.Hs.eg.db)
+library(ggbeeswarm)
+library(Signac)
+library(harmony)
+library(tidyverse)
+
+# Setting working directory.
+setwd("/mnt/4tb-platte/titus/R/bocklab_sarcoidosis_skin/")
+```
+
+## load raw data and create seurat object
+```{r}
+exp <- read.csv("GSE192456_SC_GEO_raw_counts.csv")
+meta <- read.csv("GSE192456_SC_GEO_cells.csv") |> 
+  column_to_rownames("barcode")
+
+#test <- t(exp)
+
+exp |> 
+  column_to_rownames("gene") |> 
+  t() -> counts
+
+rna <- CreateSeuratObject(counts = counts, assay = "RNA", meta.data = meta)
+
+rna@meta.data <- meta
+
+write_rds(rna, "rna.rds")
+
+rm(counts, exp, meta, test)
+
+rna
+```
+
+```{r}
+rna$mitoRatio <- PercentageFeatureSet(rna, pattern = "^MT-", assay = "RNA")
+
+rna$orig.ident <- "all"
+
+metadata <- rna[[]]
+metadata |> 
+  subset(num_genes > 600) |> 
+  ggplot(aes(x = orig.ident, y = num_genes)) +
+  geom_violin() +
+  theme_bw() +
+  ylim(0, NA) +
+  theme(axis.text.x = element_blank(),
+        axis.title.x = element_blank()) +
+  force_panelsizes(cols = unit(1, "in"),
+                   rows = unit(2, "in"))
+
+metadata |> 
+  subset(num_genes > 600) |> 
+  ggplot(aes(x = orig.ident, y = umis)) +
+  geom_violin() +
+  theme_bw() +
+  theme(axis.text.x = element_blank(),
+        axis.title.x = element_blank()) +
+  force_panelsizes(cols = unit(1, "in"),
+                   rows = unit(2, "in"))
+
+metadata |> 
+  #subset(nFeature_RNA > 400) |> 
+  ggplot(aes(x = orig.ident, y = mt_perc)) +
+  geom_violin() +
+  theme_bw() +
+  ylim(0, 100) +
+  theme(axis.text.x = element_blank(),
+        axis.title.x = element_blank()) +
+  force_panelsizes(cols = unit(1, "in"),
+                   rows = unit(2, "in")) +
+  geom_hline(yintercept = 15)
+```
+
+```{r}
+rna |> 
+  subset(pass_QC == "True") |> 
+  NormalizeData() |> 
+  FindVariableFeatures(nfeatures = 2000) |> 
+  ScaleData() |> 
+  RunPCA() |>
+  RunUMAP(dims = 1:20, reduction.name = "umap.unintegrated") |> 
+  FindNeighbors(dims = 1:20, reduction = "pca") |> 
+  FindClusters(resolution = 1, cluster.name = "clusters.unintegrated") -> rna
+
+rna |> RunHarmony("batch") |> 
+  FindNeighbors(dims = 1:20, reduction = "harmony") |> 
+  FindClusters(resolution = 1, cluster.name = "clusters.1.harmony") |> 
+  RunUMAP(dims = 1:20, reduction = "harmony", reduction.name = "umap.harmony") -> rna
+```
+
+```{r}
+DimPlot(rna, reduction = "umap.harmony", group.by = "cell_type", split.by = "tissue", label = T) + NoLegend()
+  
+FeaturePlot(rna, features = "CD4", reduction = "umap.harmony") +
+  force_panelsizes(rows = unit(3, "in"),
+                   cols = unit(3, "in"))
+
+FeaturePlot(rna, features = "ITGAM", reduction = "umap.harmony") +
+  force_panelsizes(rows = unit(3, "in"),
+                   cols = unit(3, "in"))
+
+FeaturePlot(rna, features = "CD1C", reduction = "umap.harmony") +
+  force_panelsizes(rows = unit(3, "in"),
+                   cols = unit(3, "in"))
+```
+
+```{r}
+DotPlot(rna, features =  c("CD33", "ITGAM", "CD14", "ITGAX", "FCGR3A", "CD1C", "IL3RA", "CD3E", "CD4", "CCR7", "CD69", "CD27","IL7R", "CCR4", "IL2RA", "FOXP3",  "CD8A", "CCL5", "KLRB1", "NCAM1", "CD19", "MS4A1", "IGHD", "IGHM"),
+              cluster.idents = F, group.by = "cell_type") +
+  scale_color_gradient2(low = "#6fa8dc",mid = "grey90", high = "#e06666") +
+  scale_radius(limits = c(0, 100)) +
+  theme_bw() +
+  theme(axis.title.x = element_blank(),
+        axis.title.y = element_blank(),
+        axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1),
+        panel.grid = element_blank()) +
+  force_panelsizes(rows = unit(3.5, "in"),
+                   cols = unit(5, "in"))
+```
+
+```{r}
+rna$pb_group <- paste0(rna$patient, "-", rna$tissue) |> str_replace_all("-", "_") |> str_replace_all(" ", "_")
+
+bulk <- rna |>
+  subset(cell_type %in% c("Macrophage 1", "Macrophage 2", "Monocyte derived Macrophages")) |> 
+AggregateExpression(group.by = "pb_group", return.seurat = F, normalization.method = NULL)
+
+bulk <- bulk$RNA
+colnames(bulk) <- str_replace_all(colnames(bulk), "-", "_")
+
+libsize <- bulk |>
+  as.data.frame() |>
+  summarise(across(everything(), ~ sum(.x))) |>
+  t() |>
+  as.data.frame() |>
+  rename(libsize = V1) |> 
+  rownames_to_column("pb_group")
+
+rna[[]] |> 
+  select(pb_group, tissue, patient) |> 
+  unique() |> 
+  mutate(tissue = str_replace_all(tissue, "-", "_") |> str_replace_all(" ", "_"),
+         tissue = factor(tissue, levels = c("Non_lesional_skin", "Lesional_skin"))) |> left_join(libsize) -> sample_info
+
+bulk_anno <- data.frame(pb_group = colnames(bulk)) |> 
+  left_join(sample_info)
+
+dds <- DESeqDataSetFromMatrix(bulk, bulk_anno, ~tissue + patient)
+
+dds <- DESeq(dds)
+```
+
+```{r}
+dds |> results(name = "tissue_Lesional_skin_vs_Non_lesional_skin") |> as.data.frame() |> rownames_to_column("gene") -> mph_res
+```
+
+```{r}
+rna$pb_group <- paste0(rna$patient, "-", rna$tissue) |> str_replace_all("-", "_") |> str_replace_all(" ", "_")
+
+bulk <- rna |>
+  subset(cell_type %in% c("Helper T-cells")) |> 
+AggregateExpression(group.by = "pb_group", return.seurat = F, normalization.method = NULL)
+
+bulk <- bulk$RNA
+colnames(bulk) <- str_replace_all(colnames(bulk), "-", "_")
+
+libsize <- bulk |>
+  as.data.frame() |>
+  summarise(across(everything(), ~ sum(.x))) |>
+  t() |>
+  as.data.frame() |>
+  rename(libsize = V1) |> 
+  rownames_to_column("pb_group")
+
+rna[[]] |> 
+  select(pb_group, tissue, patient) |> 
+  unique() |> 
+  mutate(tissue = str_replace_all(tissue, "-", "_") |> str_replace_all(" ", "_"),
+         tissue = factor(tissue, levels = c("Non_lesional_skin", "Lesional_skin"))) |> left_join(libsize) -> sample_info
+
+bulk_anno <- data.frame(pb_group = colnames(bulk)) |> 
+  left_join(sample_info)
+
+dds_T <- DESeqDataSetFromMatrix(bulk, bulk_anno, ~tissue + patient)
+
+dds_T <- DESeq(dds_T)
+```
+
+```{r}
+dds_T |> results(name = "tissue_Lesional_skin_vs_Non_lesional_skin") |> as.data.frame() |> rownames_to_column("gene") -> CD4_T_res
+```
+
+```{r}
+rbind(mph_res |> mutate(celltype = "macrophage"), CD4_T_res |> mutate(celltype = "CD4_T")) -> res
+```
+
+```{r}
+library(fgsea)
+library(msigdbr)
+library(ggpmisc)
+
+read_tsv("eRegulon_direct.tsv") |> 
+  subset(str_detect(eRegulon_name, "_\\+\\/\\+")) |> 
+  subset(rho_TF2G > 0.7) |> 
+  select(TF, Gene) |> 
+  unique() %>%
+  split(f = .$TF) -> eregulons_gsea
+
+sapply(eregulons_gsea, function(regulon){
+  regulon |> pull(Gene)
+}) -> eregulons_gsea
+
+eregulons_gsea$CEBPB
+
+hallmarks <- msigdbr(collection = "H")
+go <- msigdbr(collection = "C5", subcollection = "GO:BP")
+kegg <- msigdbr(collection = "C2", subcollection = "CP:KEGG_LEGACY")
+reactome <- msigdbr(collection = "C2", subcollection = "CP:REACTOME")
+
+allpws <- rbind(hallmarks, go, kegg, reactome)
+allpws_gsea <- split(allpws, f = allpws$gs_name)
+allpws_gsea <- sapply(allpws_gsea, function(pathway){
+  pathway |> pull(gene_symbol)
+})
+```
+
+```{r}
+gse_df <- res |> 
+  subset(celltype == "macrophage") |>
+  subset(baseMean > 10) |>
+  arrange(-stat)
+
+ranked_genes <- gse_df$stat
+names(ranked_genes) <- gse_df$gene
+
+gse_hm <- fgsea(pathways = allpws_gsea, stats = ranked_genes, eps = 0) |> 
+  as.data.frame()
+
+gse_hm_eregulons <- fgsea(pathways = eregulons_gsea, stats = ranked_genes, eps = 0) |> 
+  as.data.frame()
+```
+
+```{r}
+gse_df <- res |>
+  subset(celltype == "CD4_T") |> 
+  subset(!is.na(padj)) |> 
+  arrange(-stat)
+
+ranked_genes <- gse_df$stat
+names(ranked_genes) <- gse_df$gene
+
+gse_hm_T <- fgsea(pathways = allpws_gsea, stats = ranked_genes, eps = 0) |> 
+  as.data.frame()
+
+gse_hm_eregulons_T <- fgsea(pathways = eregulons_gsea, stats = ranked_genes, eps = 0) |> 
+  as.data.frame()
+```
+
+## Export results to analyze together with my own results
+```{r}
+list(dds, dds_T) -> pseudobulk_skin
+names(pseudobulk_skin) <- c("macrophage", "CD4_T")
+
+write_rds(pseudobulk_skin, "bocklab_skin/pseudobulk_skin.rds")
+
+write_csv(res, "bocklab_skin/all_fc_skin.csv")
+
+rbind(gse_hm |> mutate(celltype = "macrophage"), gse_hm_T |> mutate(celltype = "CD4_T")) |> write_csv("bocklab_skin/gsea_allpws_skin.csv")
+rbind(gse_hm_eregulons |> mutate(celltype = "macrophage"), gse_hm_eregulons_T |> mutate(celltype = "CD4_T")) |> write_csv("bocklab_skin/gsea_eregulons_skin.csv")
+```
+

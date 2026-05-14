@@ -1,0 +1,915 @@
+---
+title: "Sarcoidosis_snATAC 2"
+format: html
+editor: source
+---
+
+# R setup
+```{r}
+library(ggpmisc)
+library(msigdbr)
+library(ggrepel)
+library(ggh4x)
+library(harmony)
+library(JASPAR2020)
+library(TFBSTools)
+library(DESeq2)
+library(motifmatchr)
+library(BSgenome.Hsapiens.UCSC.hg38)
+library(clusterProfiler)
+library(ggpubr)
+library(pheatmap)
+library(ggbeeswarm)
+library(AnnotationHub)
+library(GenomicRanges)
+library(Seurat)
+library(Signac)
+library(org.Hs.eg.db)
+library(tidyverse)
+
+setwd("/mnt/data/2_Users/Titus_Schluter/sarcoidosis_atac/")
+```
+
+```{r}
+#sarc_atac_integrated <- readRDS("sarc_atac_integrated.rds")
+#sarc_atac_pctopic <- readRDS("sarc_atac_pctopic.rds")
+```
+
+# Pseudobulk
+### Using PyCisTopic consensus peaks for bulk analysis:
+While it was useful for the previous analysis and annotation, peaks called in cellranger were merged, resulting in different length peaks. PyCisTopic needs annotated cell types to form pseudobulk profiles to call peaks on. I prefer this approach for pseudobulk differential analysis, so here the PyCisTopic peaks are applied for a new feature matrix to use for differential analysis.
+```{r}
+consensus_regions <- read.table("pycisTopic/outs/consensus_peak_calling/consensus_regions.bed", header = F, col.names = c("chr", "start", "end", "peak_id", "V1", "V2"))
+
+consensus_regions$end - consensus_regions$start
+
+consensus_regions
+peaks.gr <- GenomicRanges::makeGRangesFromDataFrame(consensus_regions)
+
+# I remove the unzipped cellranger outputs when I dont need them for a while. If the paths to the fragment.tsv changed I need to update them to get the fragment information (this is too big to save in the seurat object, only the path to the cellranger output is saved.)
+new_frags <- list()
+new_frags[[1]] <- Fragments(sarc_atac_integrated[["ATAC"]])[[1]] |>
+  UpdatePath(new.path = "~/workbench/pool_1/fragments.tsv.gz")
+new_frags[[2]] <- Fragments(sarc_atac_integrated[["ATAC"]])[[2]] |>
+  UpdatePath(new.path = "~/workbench/pool_2_1/fragments.tsv.gz")
+new_frags[[3]] <- Fragments(sarc_atac_integrated[["ATAC"]])[[3]] |>
+  UpdatePath(new.path = "~/workbench/pool_2_2/fragments.tsv.gz")
+new_frags[[4]] <- Fragments(sarc_atac_integrated[["ATAC"]])[[4]] |>
+  UpdatePath(new.path = "~/workbench/pool_3_1/fragments.tsv.gz")
+new_frags[[5]] <- Fragments(sarc_atac_integrated[["ATAC"]])[[5]] |>
+  UpdatePath(new.path = "~/workbench/pool_3_2/fragments.tsv.gz")
+# 
+Fragments(sarc_atac_integrated[["ATAC"]]) <- NULL
+Fragments(sarc_atac_integrated[["ATAC"]]) <- new_frags
+
+Fragments(sarc_atac_pctopic[["ATAC"]]) <- NULL
+Fragments(sarc_atac_pctopic[["ATAC"]]) <- new_frags
+
+
+### build new celltype specific feature matrix (takes long)
+counts <- FeatureMatrix(fragments = Fragments(sarc_atac_integrated[["ATAC"]]),
+                        features = peaks.gr,
+                        cells = Cells(sarc_atac_integrated))
+
+chromatin_assay <- CreateChromatinAssay(counts = counts,
+                                        fragments = Fragments(sarc_atac_integrated[["ATAC"]]))
+
+ah <- AnnotationHub()
+
+query(ah, "EnsDb.Hsapiens.v98")
+
+ensdb_v98 <- ah[["AH75011"]]
+
+annotations <- GetGRangesFromEnsDb(ensdb = ensdb_v98)
+
+seqlevels(annotations) <- paste0("chr", seqlevels(annotations))
+genome(annotations) <- "hg38"
+
+Annotation(chromatin_assay) <- annotations
+
+sarc_atac_pctopic <- CreateSeuratObject(chromatin_assay,
+                                        assay = "ATAC",
+                                        meta.data = sarc_atac_integrated@meta.data)
+sarc_atac_pctopic
+write_rds(sarc_atac_pctopic, "sarc_atac_pctopic.rds")
+write_rds(sarc_atac_integrated, "sarc_atac_integrated.rds")
+```
+
+### Pseudobulk: Create DESeq datasets
+```{r}
+sample_info <- readxl::read_xlsx("../250804_Sarcoidosis_patient_metadata.xlsx") |> 
+  mutate(pool = case_when(`scATAC pool` == "1.1" ~ "pool_1",
+                          `scATAC pool` == "2.1" ~ "pool_2_1",
+                          `scATAC pool` == "2.2" ~ "pool_2_2",
+                          `scATAC pool` == "3.1" ~ "pool_3_1",
+                          `scATAC pool` == "3.2" ~ "pool_3_2"))
+
+pops <- sarc_atac_pctopic$cluster_names_pseudobulk |> unique()
+
+pseudobulk <- sapply(pops, function(pop){
+bulk <- sarc_atac_pctopic |> 
+  subset(state != "CGD") |> 
+  subset(cluster_names_pseudobulk == pop) |>
+AggregateExpression(group.by = "SampleID", return.seurat = F, normalization.method = NULL)
+
+bulk <- bulk$ATAC
+colnames(bulk) <- str_replace_all(colnames(bulk), "-", "_")
+colnames(bulk)[1:4] <- str_replace(colnames(bulk)[1:4], "g", "")
+
+libsize <- bulk |>
+  as.data.frame() |>
+  summarise(across(everything(), ~ sum(.x))) |>
+  t() |>
+  as.data.frame() |>
+  rename(libsize = V1) |> 
+  rownames_to_column("SampleID")
+
+sample_info_bulk <- sample_info |>
+  mutate(state = factor(state, levels = c("healthy", "sarcoidosis"))) |> left_join(libsize)
+
+bulk_anno <- data.frame(SampleID = colnames(bulk)) |> 
+  left_join(sample_info_bulk)
+
+dds <- DESeqDataSetFromMatrix(bulk, bulk_anno, ~state + pool + Sex)
+
+peaks.keep <- rownames(dds)[!(str_detect(rownames(dds), "X-") | str_detect(rownames(dds), "Y-"))]
+peaks.keep <- peaks.keep[str_detect(peaks.keep, "chr")]
+
+dds <- dds[rownames(dds) %in% peaks.keep,]
+
+detected <- dds |> 
+  counts() |> 
+  rowMeans()
+
+detected <- detected[detected > 10] |> names()
+
+dds <- dds[rownames(dds) %in% detected,]
+
+dds <- DESeq(dds)
+return(dds)
+})
+
+write_rds(pseudobulk, "output/pseudobulk.rds")
+```
+
+```{r}
+all_fc <- lapply(names(pseudobulk), function(pop){
+  pseudobulk[[pop]] |> 
+    results(name = "state_sarcoidosis_vs_healthy") |> 
+    as.data.frame() |> 
+    rownames_to_column("peak") |> 
+    mutate(ClosestFeature(sarc_atac_pctopic[["ATAC"]], peak),
+           celltype = pop) 
+}) |> bind_rows()
+
+write_csv(all_fc, "output/all_fc.csv")
+```
+
+### Pseudobulk: ORA all pathways
+```{r}
+pops <- c("CD14_Mono", "CD4_memory", "CD4_naive", "CD8_memory", "NK")
+
+
+hallmarks <- msigdbr(collection = "H")
+go <- msigdbr(collection = "C5", subcollection = "GO:BP")
+kegg <- msigdbr(collection = "C2", subcollection = "CP:KEGG_LEGACY")
+reactome <- msigdbr(collection = "C2", subcollection = "CP:REACTOME")
+
+allpws <- rbind(hallmarks, go)
+
+all_fc <- read_csv("output/all_fc.csv")
+
+ora_hm <- lapply(pops, function(pop){
+res <- all_fc |> 
+  subset(celltype == pop) |> 
+  subset(!is.na(padj))
+
+universe <- res$gene_name
+
+ora_up <- enricher(res |> subset(padj < 0.05 & log2FoldChange > 0) |> pull(gene_name), 
+         universe = universe, 
+         TERM2GENE = allpws |> select(gs_id, gene_symbol),
+         TERM2NAME = allpws |> select(gs_id, gs_name), 
+         pAdjustMethod = "BH", 
+         qvalueCutoff = 0.05)
+
+ora_down <- enricher(res |> subset(padj < 0.05 & log2FoldChange < 0) |> pull(gene_name), 
+         universe = universe, 
+         TERM2GENE = allpws |> select(gs_id, gene_symbol),
+         TERM2NAME = allpws |> select(gs_id, gs_name), 
+         pAdjustMethod = "BH", 
+         qvalueCutoff = 0.05)
+
+ora_up <- ora_up@result |> 
+  mutate(direction = "up")
+
+ora_down <- ora_down@result |> 
+  mutate(direction = "down")
+
+ora_hm <- rbind(ora_up, ora_down) |> mutate(celltype = pop)
+
+return(ora_hm)
+}) |> bind_rows()
+
+write_csv(ora_hm, "output/ora_all.csv")
+```
+
+## Tn5 insertion coverage:
+#### write out barcodes per cell type and condition
+```{r}
+celltypes <- c("CD14_Mono", "CD4_naive", "CD4_memory", "CD8_memory", "NK")
+
+celltype_barcodes <- sarc_atac_pctopic@meta.data |> 
+  select(barcode, cluster_names_pseudobulk, pool, state) |> 
+  mutate(celltype_pool = paste0(cluster_names_pseudobulk, "_", state, "_", pool),
+         celltype = paste0(cluster_names_pseudobulk, "_", state),
+         folder = case_when(pool == "pool_1" ~ "202403108_1_count",
+                            pool == "pool_2_1" ~ "202403108a_1_count",
+                            pool == "pool_2_2" ~ "202403108a_2_count",
+                            pool == "pool_3_1" ~ "202403108b_3-1_count",
+                            pool == "pool_3_2" ~ "202403108b_3-2_count")) |> 
+  subset(cluster_names_pseudobulk %in% celltypes) |> 
+  subset(state != "CGD") |> 
+  rownames_to_column("barcode_pooled")
+
+files <- celltype_barcodes$celltype_pool |> unique()
+celltypes <- celltype_barcodes$celltype |> unique()
+
+for (file in files){
+  celltype_barcodes |> 
+    subset(celltype == file) |> 
+    pull(barcode) |> 
+    write_lines(paste0("/home/titus.schluter@mydre.org/celltype_barcodes/", file, ".txt"))
+}
+
+celltype_barcodes |> 
+  select(pool, folder) |> 
+  unique()
+```
+
+### Write tsv fragments file for each celltype_state
+```{bash, eval = F}
+for pool in pool_1 pool_2_1 pool_2_2 pool_3_1 pool_3_2; do 
+  zcat ${pool}/outs/fragments.tsv.gz | grep -F -f celltype_barcodes/${pop}_${pool}.txt > celltype_barcodes/${pop}_${pool}.tsv
+done
+
+for pop in CD8_memory_sarcoidosis CD14_Mono_sarcoidosis CD4_memory_sarcoidosis CD8_memory_healthy NK_sarcoidosis CD14_Mono_healthy CD4_naive_healthy NK_healthy CD4_naive_sarcoidosis CD4_memory_healthy; do
+cat celltype_barcodes/${pop}_pool*.tsv > ${pop}_all.tsv
+done
+
+conda install -c bioconda ucsc-fetchchromsizes ucsc-bedgraphtobigwig
+
+fetchChromSizes hg38 > hg38.chrom.sizes
+
+for pop in CD8_memory_sarcoidosis CD14_Mono_sarcoidosis CD4_memory_sarcoidosis CD8_memory_healthy NK_sarcoidosis CD14_Mono_healthy CD4_naive_healthy NK_healthy CD4_naive_sarcoidosis CD4_memory_healthy; do
+cat ${pop}_all.tsv | sed "s/chr1/chr01/g" | sed "s/chr2/chr02/g" | sed "s/chr3/chr03/g" | sed "s/chr4/chr04/g" | sed "s/chr5/chr05/g" | sed "s/chr6/chr06/g" | sed "s/chr7/chr07/g" | sed "s/chr8/chr08/g" | sed "s/chr9/chr09/g" > ${pop}_all_vorangestelltenullen.tsv
+sort -V -k1,1 -k2,2n -k3,3n ${pop}_all_vorangestelltenullen.tsv > ${pop}_all.sorted.tsv
+cat ${pop}_all.sorted.tsv | sed "s/chr01/chr1/g" | sed "s/chr02/chr2/g" | sed "s/chr03/chr3/g" | sed "s/chr04/chr4/g" | sed "s/chr05/chr5/g" | sed "s/chr06/chr6/g" | sed "s/chr07/chr7/g" | sed "s/chr08/chr8/g" | sed "s/chr09/chr9/g" > ${pop}.sorted.tsv
+grep -v -E "^GL|^KI" ${pop}.sorted.tsv > ${pop}_nocontigs.sorted.tsv
+done
+
+for pop in CD8_memory_sarcoidosis CD14_Mono_sarcoidosis CD4_memory_sarcoidosis CD8_memory_healthy NK_sarcoidosis CD14_Mono_healthy CD4_naive_healthy NK_healthy CD4_naive_sarcoidosis CD4_memory_healthy; do
+bedtools genomecov -i ${pop}_nocontigs.sorted.tsv -g hg38.chrom.sizes -bg > ${pop}.bedgraph
+bedGraphToBigWig ${pop}.bedgraph hg38.chrom.sizes ${pop}.bw
+done
+
+for pop in CD8_memory_sarcoidosis CD14_Mono_sarcoidosis CD4_memory_sarcoidosis CD8_memory_healthy NK_sarcoidosis CD14_Mono_healthy CD4_naive_healthy NK_healthy CD4_naive_sarcoidosis CD4_memory_healthy; do
+mv ${pop}.bw /mnt/data/2_Users/Titus_Schluter/${pop}.bw
+done
+
+for pop in CD4_naive CD4_memory CD8_memory CD14_Mono NK; do
+rm ${pop}*
+done
+
+rm -r celltype_barcodes
+rm hg38.chrom.sizes
+```
+
+## Tn5 insertion bed files
+#### Write cell barcodes for each cell type and condition (state)
+```{r}
+## Create BigWig files to use in the UCSC genome browser
+celltypes <- c("CD4_memory", "CD4_naive", "CD8_memory", "NK")
+
+celltype_barcodes <- sarc_atac_pctopic@meta.data |> 
+  subset(state %in% c("healthy", "sarcoidosis")) |> 
+  select(barcode, cluster_names_pseudobulk, pool, state) |> 
+  mutate(celltype_pool = paste0(cluster_names_pseudobulk, "_", state, "_", pool),
+         celltype = paste0(cluster_names_pseudobulk, "_", state)) |> 
+  subset(cluster_names_pseudobulk %in% celltypes) |> 
+  rownames_to_column("barcode_pooled")
+
+files <- celltype_barcodes$celltype_pool |> unique()
+celltypes <- celltype_barcodes$celltype |> unique()
+
+for (file in files){
+  celltype_barcodes |> 
+    subset(celltype_pool == file) |> 
+    pull(barcode) |> 
+    write_lines(paste0("Tn5_bed/", file, ".txt"))
+}
+```
+
+# Generate Tn5 insertion bed files and generate bigwig of normalized coverage
+```{bash, eval = F}
+cd /mnt/data/2_Users/Titus_Schluter/sarcoidosis_atac/Tn5_bed
+
+for pop in CD14_Mono_sarcoidosis CD14_Mono_healthy; do
+for pool in pool_1 pool_2_1 pool_2_2 pool_3_1 pool_3_2; do 
+  zcat ~/workbench/${pool}/fragments.tsv.gz | grep -F -f ${pop}_${pool}.txt > ${pop}_${pool}.tsv
+done
+done
+
+for pop in CD14_Mono_sarcoidosis CD14_Mono_healthy; do
+cat ${pop}_pool*.tsv > ${pop}_all.tsv
+done
+
+
+## python script from github.com/tacazares/scATAC_analysis/scripts
+python fragmentsToTn5.py -i CD14_Mono_healthy_all.tsv -o /. -n CD14_Mono_healthy_Tn5
+python fragmentsToTn5.py -i CD14_Mono_sarcoidosis_all.tsv -o /. -n CD14_Mono_sarcoidosis_Tn5
+
+#conda install -c bioconda ucsc-fetchchromsizes ucsc-bedgraphtobigwig
+
+fetchChromSizes hg38 > hg38.chrom.sizes
+
+gunzip CD14_Mono_healthy_Tn5.bed.gz
+gunzip CD14_Mono_sarcoidosis_Tn5.bed.gz
+
+sort -k 1,1 CD14_Mono_healthy_Tn5.bed > CD14_Mono_healthy_Tn5_sorted.bed
+sort -k 1,1 TCD14_Mono_sarcoidosis_Tn5.bed > CD14_Mono_sarcoidosis_Tn5_sorted.bed
+
+bedtools genomecov -dz -i CD14_Mono_sarcoidosis_Tn5_sorted.bed -g hg38.chrom.sizes > CD14_Mono_sarcoidosis_Tn5.bedgraph
+bedtools genomecov -dz -i CD14_Mono_healthy_Tn5_sorted.bed -g hg38.chrom.sizes > CD14_Mono_healthy_Tn5.bedgraph
+
+N_healthy=$(wc -l < CD14_Mono_healthy_Tn5.bed)
+N_sarcoidosis=$(wc -l < CD14_Mono_sarcoidosis_Tn5.bed)
+
+scale_healthy=$(awk -v n=$N_healthy 'BEGIN{print 1000000.0/n}')
+scale_sarcoidosis=$(awk -v n=$N_sarcoidosis 'BEGIN{print 1000000.0/n}')
+
+awk 'BEGIN{OFS="\t"} {print $1, $2, $2+1, $3}' CD14_Mono_healthy_Tn5.bedgraph > CD14_Mono_healthy_Tn5_end.bedgraph
+awk -v s=$scale_healthy 'BEGIN{OFS="\t"} {print $1, $2, $3, ($4+0.0)*s}' CD14_Mono_healthy_Tn5_end.bedgraph > CD14_Mono_healthy_Tn5_scaled.bedgraph
+awk 'BEGIN{OFS="\t"} {print $1, $2, $2+1, $3}' CD14_Mono_sarcoidosis_Tn5.bedgraph > CD14_Mono_sarcoidosis_Tn5_end.bedgraph
+awk -v s=$scale_sarcoidosis 'BEGIN{OFS="\t"} {print $1, $2, $3, ($4+0.0)*s}' CD14_Mono_sarcoidosis_Tn5_end.bedgraph > CD14_Mono_sarcoidosis_Tn5_scaled.bedgraph
+
+bedGraphToBigWig CD14_Mono_healthy_Tn5_scaled.bedgraph ../hg38.chrom.sizes CD14_Mono_healthy_Tn5.bw -unc
+bedGraphToBigWig CD14_Mono_sarcoidosis_Tn5_scaled.bedgraph ../hg38.chrom.sizes CD14_Mono_sarcoidosis_Tn5.bw -unc
+```
+
+same process for the other cell types in parallel
+```{bash, eval = F}
+cd /mnt/data/2_Users/Titus_Schluter/sarcoidosis_atac/Tn5_bed
+
+for pop in CD4_naive_healthy CD4_naive_sarcoidosis CD4_memory_healthy CD4_memory_sarcoidosis CD8_memory_healthy CD8_memory_sarcoidosis NK_healthy NK_sarcoidosis; do
+for pool in pool_1 pool_2_1 pool_2_2 pool_3_1 pool_3_2; do 
+  zcat ~/workbench/${pool}/fragments.tsv.gz | grep -F -f ${pop}_${pool}.txt > ${pop}_${pool}.tsv
+done
+done
+
+for pop in CD4_naive_healthy CD4_naive_sarcoidosis CD4_memory_healthy CD4_memory_sarcoidosis CD8_memory_healthy CD8_memory_sarcoidosis NK_healthy NK_sarcoidosis; do
+cat ${pop}_pool*.tsv > ${pop}_all.tsv
+done
+
+parallel -j 4 "python ../fragmentsToTn5.py -i {1}_healthy_all.tsv -o . -n {1}_healthy_Tn5 \
+python ../fragmentsToTn5.py -i {1}_sarcoidosis_all.tsv -o . -n {1}_sarcoidosis_Tn5" ::: CD4_naive CD4_memory CD8_memory NK
+
+#conda install -c bioconda ucsc-fetchchromsizes ucsc-bedgraphtobigwig
+
+fetchChromSizes hg38 > hg38.chrom.sizes
+
+for pop in CD4_naive_healthy CD4_naive_sarcoidosis CD4_memory_healthy CD4_memory_sarcoidosis CD8_memory_healthy CD8_memory_sarcoidosis NK_healthy NK_sarcoidosis; do
+gunzip ${pop}_Tn5.bed.gz
+done
+
+parallel -j 4 "sort -k 1,1 {1}_healthy_Tn5.bed > {1}_healthy_Tn5_sorted.bed" ::: CD4_naive CD4_memory CD8_memory NK
+
+parallel -j 4 "sort -k 1,1 {1}_sarcoidosis_Tn5.bed > {1}_sarcoidosis_Tn5_sorted.bed" ::: CD4_naive CD4_memory CD8_memory NK
+
+parallel -j 4 "bedtools genomecov -dz -i {1}_healthy_Tn5_sorted.bed -g hg38.chrom.sizes > {1}_healthy_Tn5.bedgraph" ::: CD4_naive CD4_memory CD8_memory NK
+
+parallel -j 4 "bedtools genomecov -dz -i {1}_sarcoidosis_Tn5_sorted.bed -g hg38.chrom.sizes > {1}_sarcoidosis_Tn5.bedgraph" ::: CD4_naive CD4_memory CD8_memory NK
+
+
+for pop in CD4_naive CD4_memory CD8_memory NK; do
+N_healthy=$(wc -l < ${pop}_healthy_Tn5.bed)
+N_sarcoidosis=$(wc -l < ${pop}_sarcoidosis_Tn5.bed)
+
+scale_healthy=$(awk -v n=$N_healthy 'BEGIN{print 1000000.0/n}')
+scale_sarcoidosis=$(awk -v n=$N_sarcoidosis 'BEGIN{print 1000000.0/n}')
+
+awk 'BEGIN{OFS="\t"} {print $1, $2, $2+1, $3}' ${pop}_healthy_Tn5.bedgraph > ${pop}_healthy_Tn5_end.bedgraph
+awk -v s=$scale_healthy 'BEGIN{OFS="\t"} {print $1, $2, $3, ($4+0.0)*s}' ${pop}_healthy_Tn5_end.bedgraph > ${pop}_healthy_Tn5_scaled.bedgraph
+awk 'BEGIN{OFS="\t"} {print $1, $2, $2+1, $3}' ${pop}_sarcoidosis_Tn5.bedgraph > ${pop}_sarcoidosis_Tn5_end.bedgraph
+awk -v s=$scale_sarcoidosis 'BEGIN{OFS="\t"} {print $1, $2, $3, ($4+0.0)*s}' ${pop}_sarcoidosis_Tn5_end.bedgraph > ${pop}_sarcoidosis_Tn5_scaled.bedgraph
+done
+
+parallel -j 4 "bedGraphToBigWig {1}_healthy_Tn5_scaled.bedgraph hg38.chrom.sizes {1}_healthy_Tn5.bw -unc" ::: CD4_naive CD4_memory CD8_memory NK
+parallel -j 4 "bedGraphToBigWig {1}_sarcoidosis_Tn5_scaled.bedgraph hg38.chrom.sizes {1}_sarcoidosis_Tn5.bw -unc" ::: CD4_naive CD4_memory CD8_memory NK
+```
+
+## SCENICplus installation
+```{bash, eval = f}
+conda create --name scenicplus python=3.11.8
+
+conda activate scenicplus
+git clone https://github.com/aertslab/scenicplus
+cd scenicplus
+git checkout development
+pip install .
+```
+
+## write DARs as input for SCENIC+
+```{r}
+pops = c("NK", "CD8_memory", "CD4_memory", "CD4_naive", "CD14_Mono")
+
+for (pop in pops){
+  all_fc |> 
+    subset(celltype == pop) |> 
+    subset(padj < 0.1) |> 
+    arrange(padj) |> 
+    subset(log2FoldChange > 0) %>%
+    mutate(chromosome = word(peak, 1, sep = "-"),
+           start = word(peak, 2, sep = "-"),
+           end = word(peak, 3, sep = "-"),
+           peak_id = paste0(celltype, "_up_peak_", 1:nrow(.))) |> 
+    dplyr::select(chromosome, start, end, peak_id) |> 
+    write_tsv(paste0("pycisTopic/outs/region_sets/DARs_celltype/", pop, "_up_peaks.bed"), col_names = F)
+  
+  all_fc |> 
+    subset(celltype == pop) |> 
+    subset(padj < 0.1) |> 
+    arrange(padj) |> 
+    subset(log2FoldChange < 0) %>%
+    mutate(chromosome = word(peak, 1, sep = "-"),
+           start = word(peak, 2, sep = "-"),
+           end = word(peak, 3, sep = "-"),
+           peak_id = paste0(celltype, "_down_peak_", 1:nrow(.))) |> 
+    dplyr::select(chromosome, start, end, peak_id) |> 
+    write_tsv(paste0("pycisTopic/outs/region_sets/DARs_celltype/", pop, "_down_peaks.bed"), col_names = F)
+  
+  ## Write all detected peaks per celltype (for HOMER):
+  all_fc |> 
+    subset(celltype == pop) |> 
+    subset(!is.na(padj)) |> 
+    mutate(chromosome = word(peak, 1, sep = "-"),
+           start = word(peak, 2, sep = "-"),
+           end = word(peak, 3, sep = "-")) |> 
+    dplyr::select(chromosome, start, end) |> 
+    write_tsv(paste0("HOMER/background_peaks/", pop, "_background_peaks.bed"), col_names = F)
+}
+```
+
+## Find cell type marker regions for SCENIC+
+```{r}
+marker_regions <- FindAllMarkers(sarc_atac_pctopic, assay = "ATAC", min.pct = 0.1, group.by = "cluster_names_pseudobulk", only.pos = T)
+
+selected <- marker_regions |> 
+  group_by(cluster) |> 
+  subset(p_val_adj < 1e-50) |> 
+  slice_min(p_val_adj, n = 5000) |> 
+  ungroup()
+
+selected$cluster |> 
+  unique() |> 
+  as.vector() |> 
+  lapply(function(pop){
+    selected |> 
+      subset(cluster == pop) %>% 
+      mutate(chromosome = word(gene, 1, sep = "-"),
+             start = word(gene, 2, sep = "-"),
+             end = word(gene, 3, sep = "-"),
+             peak_id = paste0(pop, "_marker_region", 1:nrow(.))) |> 
+      dplyr::select(chromosome, start, end, peak_id) |> 
+      write_tsv(paste0("pycisTopic/outs/region_sets/celltype_marker_regions/", pop, "_marker_regions.bed"), col_names = F)
+  })
+```
+
+## create tss.bed for pycistopic
+```{r}
+tss <- read_tsv("pycisTopic/mart_export.txt")
+
+tss <- tss |> 
+  subset(`Transcript type` == "protein_coding") |> 
+  rename(`# Chromosome` = `Chromosome/scaffold name`,
+         End = `Transcription start site (TSS)`,
+         Gene = `Gene name`,
+         Transcript_type = `Transcript type`) |> 
+  subset(`# Chromosome` %in% c("MT", "X", "Y", 1:22)) |> 
+  mutate(`# Chromosome` = case_when(`# Chromosome` == "MT" ~ "chrM",
+                                TRUE ~ paste0("chr", `# Chromosome`)),
+         Start = End - 1,
+         Strand = case_when(Strand == 1 ~ "+",
+                            Strand == -1 ~ "-"),
+         Score = ".") |> 
+  select(`# Chromosome`, Start, End, Gene, Score, Strand, Transcript_type)
+  
+write_tsv(tss, "pycisTopic/tss.bed")
+
+
+read_tsv("/home/titus.schluter@mydre.org/workbench/pool_1/outs/fragments.tsv.gz")
+```
+
+## SCENIC+ create custom cistarget database
+```{bash}
+# install create_cistarget_database
+git clone https://github.com/aertslab/create_cisTarget_databases
+cd create_cisTarget_databases
+echo "create_cistarget_databases_dir='""${PWD}""'"
+create_cistarget_databases_dir="/home/titus.schluter@mydre.org/create_cisTarget_databases"
+
+conda create -n create_cistarget_databases \
+    'python=3.10' \
+    'numpy=1.21' \
+    'pandas>=1.4.1' \
+    'pyarrow>=7.0.0' \
+    'numba>=0.55.1' \
+    'python-flatbuffers'
+    
+conda activate create_cistarget_databases
+
+# download cluster buster
+cd "${CONDA_PREFIX}/bin"
+wget https://resources.aertslab.org/cistarget/programs/cbust
+# make the downloaded bin executable
+chmod a+x cbust
+
+# same with ucsc tools
+# liftOver
+wget http://hgdownload.soe.ucsc.edu/admin/exe/linux.x86_64/liftOver
+wget http://hgdownload.soe.ucsc.edu/admin/exe/linux.x86_64/bigWigAverageOverBed
+
+# Make downloaded binaries executable.
+chmod a+x liftOver bigWigAverageOverBed
+
+# download motif collection
+mkdir -p aertslab_motif_colleciton
+wget -O aertslab_motif_colleciton/v10nr_clust_public.zip https://resources.aertslab.org/cistarget/motif_collections/v10nr_clust_public/v10nr_clust_public.zip
+cd aertslab_motif_colleciton
+unzip -q v10nr_clust_public.zip
+cd ..
+# check available species motif databases
+ls aertslab_motif_colleciton/v10nr_clust_public/snapshots/
+
+# if not on the drive, download human genome fasta hg38.fa and human genome chrom.sizes
+wget -O human_genome/hg38.fa.gz http://hgdownload.cse.ucsc.edu/goldenPath/hg38/bigZips/hg38.fa.gz
+wget -O human_genome/hg38.fa.gz http://hgdownload.cse.ucsc.edu/goldenPath/hg38/bigZips/hg38.fa.gz
+gunzip human_genome/hg38.fa.gz
+wget -O human_genome/hg38.chrom.sizes http://hgdownload.cse.ucsc.edu/goldenPath/hg38/bigZips/hg38.chrom.sizes
+
+# assemble a fasta from consensus peaks
+REGION_BED="/mnt/data/2_Users/Titus_Schluter/sarcoidosis_atac/pycisTopic/outs/consensus_peak_calling/consensus_regions.bed"
+GENOME_FASTA="/home/titus.schluter@mydre.org/human_genome/hg38.fa"
+CHROMSIZES="/home/titus.schluter@mydre.org/human_genome/hg38.chrom.sizes"
+DATABASE_PREFIX="sarcoidosis_atac"
+SCRIPT_DIR="/home/titus.schluter@mydre.org/create_cisTarget_databases"
+
+${SCRIPT_DIR}/create_fasta_with_padded_bg_from_bed.sh \
+        ${GENOME_FASTA} \
+        ${CHROMSIZES} \
+        ${REGION_BED} \
+        hg38.sarcoidosis_atac_consensus.fa \
+        1000 \
+        yes
+        
+# fetch all motifs from the collection
+ls aertslab_motif_colleciton/v10nr_clust_public/singletons > motifs.txt
+
+# create cistarget database (this may take long)
+OUT_DIR=""${PWD}""
+CBDIR="${OUT_DIR}/aertslab_motif_colleciton/v10nr_clust_public/singletons"
+FASTA_FILE="${OUT_DIR}/hg38.sarcoidosis_atac_consensus.fa"
+MOTIF_LIST="${OUT_DIR}/motifs.txt"
+
+"${SCRIPT_DIR}/create_cistarget_motif_databases.py" \
+    -f ${FASTA_FILE} \
+    -M ${CBDIR} \
+    -m ${MOTIF_LIST} \
+    -o ${OUT_DIR}/${DATABASE_PREFIX} \
+    --bgpadding 1000 \
+    -t 20
+```
+
+## SCENIC+ config.yaml for the Snakemake pipeline
+```{bash}
+input_data:
+  cisTopic_obj_fname: "/mnt/data/2_Users/Titus_Schluter/sarcoidosis_atac/pycisTopic/outs/cistopic_obj.pkl"
+  GEX_anndata_fname: "/mnt/data/2_Users/Titus_Schluter/sarcoidosis_rna/scenicplus_adata.h5ad"
+  region_set_folder: "/mnt/data/2_Users/Titus_Schluter/sarcoidosis_atac/pycisTopic/outs/region_sets/"
+  ctx_db_fname: "/home/titus.schluter@mydre.org/workbench/scplus_sarcoidosis/sarcoidosis.regions_vs_motifs.rankings.feather"
+  dem_db_fname: "/home/titus.schluter@mydre.org/workbench/scplus_sarcoidosis/sarcoidosis.regions_vs_motifs.scores.feather"
+  path_to_motif_annotations: "/home/titus.schluter@mydre.org/aertslab_motif_colleciton/v10nr_clust_public/snapshots/motifs-v10-nr.hgnc-m0.00001-o0.0.tbl"
+
+output_data:
+  # output for prepare_GEX_ACC .h5mu
+  combined_GEX_ACC_mudata: "/home/titus.schluter@mydre.org/workbench/outs/ACC_GEX.h5mu"
+  # output for motif enrichment results .hdf5
+  dem_result_fname: "/home/titus.schluter@mydre.org/workbench/outs/dem_results.hdf5"
+  ctx_result_fname: "/home/titus.schluter@mydre.org/workbench/outs/ctx_results.hdf5"
+  # output html for motif enrichment results .html
+  output_fname_dem_html: "/home/titus.schluter@mydre.org/workbench/outs/dem_results.html"
+  output_fname_ctx_html: "/home/titus.schluter@mydre.org/workbench/outs/ctx_results.html"
+  # output for prepare_menr .h5ad
+  cistromes_direct: "/home/titus.schluter@mydre.org/workbench/outs/cistromes_direct.h5ad"
+  cistromes_extended: "/home/titus.schluter@mydre.org/workbench/outs/cistromes_extended.h5ad"
+  # output tf names .txt
+  tf_names: "/home/titus.schluter@mydre.org/workbench/outs/tf_names.txt"
+  # output for download_genome_annotations .tsv
+  genome_annotation: "/home/titus.schluter@mydre.org/workbench/outs/genome_annotation.tsv"
+  chromsizes: "/home/titus.schluter@mydre.org/workbench/outs/chromsizes.tsv"
+  # output for search_space .tsb
+  search_space: "/home/titus.schluter@mydre.org/workbench/outs/search_space.tsv"
+  # output tf_to_gene .tsv
+  tf_to_gene_adjacencies: "/home/titus.schluter@mydre.org/workbench/outs/tf_to_gene_adj.tsv"
+  # output region_to_gene .tsv
+  region_to_gene_adjacencies: "/home/titus.schluter@mydre.org/workbench/outs/region_to_gene_adj.tsv"
+  # output eGRN .tsv
+  eRegulons_direct: "/home/titus.schluter@mydre.org/workbench/outs/eRegulon_direct.tsv"
+  eRegulons_extended: "/home/titus.schluter@mydre.org/workbench/outs/eRegulons_extended.tsv"
+  # output AUCell .h5mu
+  AUCell_direct: "/home/titus.schluter@mydre.org/workbench/outs/AUCell_direct.h5mu"
+  AUCell_extended: "/home/titus.schluter@mydre.org/workbench/outs/AUCell_extended.h5mu"
+  # output scplus mudata .h5mu
+  scplus_mdata: "/home/titus.schluter@mydre.org/workbench/outs/scplusmdata.h5mu"
+
+params_general:
+  temp_dir: "/home/titus.schluter@mydre.org/workbench/tmp"
+  n_cpu: 55
+  seed: 666
+
+params_data_preparation:
+  # Params for prepare_GEX_ACC
+  bc_transform_func: "\"lambda x: f'{x}'\""
+  is_multiome: False
+  key_to_group_by: "cluster_names_pseudobulk"
+  nr_cells_per_metacells: 10
+  # Params for prepare_menr
+  direct_annotation: "Direct_annot"
+  extended_annotation: "Orthology_annot"
+  # Params for download_genome_annotations
+  species: "hsapiens"
+  biomart_host: "http://www.ensembl.org"
+  # Params for search_space
+  search_space_upstream: "1000 150000"
+  search_space_downstream: "1000 150000"
+  search_space_extend_tss: "10 10"
+
+params_motif_enrichment:
+  species: "homo_sapiens"
+  annotation_version: "v10nr_clust"
+  motif_similarity_fdr: 0.001
+  orthologous_identity_threshold: 0.0
+  annotations_to_use: "Direct_annot Orthology_annot"
+  fraction_overlap_w_dem_database: 0.4
+  dem_max_bg_regions: 500
+  dem_balance_number_of_promoters: True
+  dem_promoter_space: 1_000
+  dem_adj_pval_thr: 0.05
+  dem_log2fc_thr: 1.0
+  dem_mean_fg_thr: 0.0
+  dem_motif_hit_thr: 3.0
+  fraction_overlap_w_ctx_database: 0.4
+  ctx_auc_threshold: 0.005
+  ctx_nes_threshold: 3.0
+  ctx_rank_threshold: 0.05
+
+
+
+
+params_inference:
+  # Params for tf_to_gene
+  tf_to_gene_importance_method: "GBM"
+  # Params regions_to_gene
+  region_to_gene_importance_method: "GBM"
+  region_to_gene_correlation_method: "SR"
+  # Params for eGRN inference
+  order_regions_to_genes_by: "importance"
+  order_TFs_to_genes_by: "importance"
+  gsea_n_perm: 1000
+  quantile_thresholds_region_to_gene: "0.85 0.90 0.95"
+  top_n_regionTogenes_per_gene: "5 10 15"
+  top_n_regionTogenes_per_region: ""
+  min_regions_per_gene: 0
+  rho_threshold: 0.05
+  min_target_genes: 10
+```
+
+## Generate DORC scores from SCENIC+ results
+```{r}
+library(FigR)
+
+eRegulons <- read_tsv("outs_scplus/eRegulon_direct.tsv")
+
+eRegulons
+
+DORC_df <- eRegulons |> 
+  select(Region, Gene, rho_R2G) |> 
+  subset(rho_R2G > 0.50) |> 
+  unique()
+
+DORC_df |> 
+  select(Gene, Region) |> 
+  unique() |> 
+  count(Gene) |> 
+  arrange(-n) %>%
+  mutate(rank = 1:nrow(.),
+         label = Gene == "CEBPB") |> 
+  ggplot(aes(x = rank, y = n)) +
+  geom_point(color = "steelblue") +
+  theme_classic() +
+  force_panelsizes(rows = unit(2, "in"),
+                   cols = unit(2, "in")) +
+  geom_hline(yintercept = 9.5) +
+  geom_text_repel(aes(label = ifelse(label, Gene, "")), hjust = -1, max_overlaps = 15)
+  
+DORC_genes <- DORC_df |> 
+  select(Gene, Region) |> 
+  unique() |> 
+  count(Gene) |> 
+  subset(n >= 10) |> 
+  pull(Gene)
+
+library(FigR)
+library(SummarizedExperiment)
+library(GenomicRanges)
+
+ATAC.se <- SummarizedExperiment(
+  assay = list(counts = sarc_atac_pctopic[["ATAC"]]$counts),
+  rowRanges = granges(sarc_atac_pctopic),
+  colData = sarc_atac_pctopic[[]]
+)
+
+DORC_df_filtered <- DORC_df |> 
+  subset(Gene %in% DORC_genes) |> 
+  mutate(Peak = match(Region |> str_replace(":", "-"), rownames(ATAC.se)))
+
+DORC_scores <- FigR::getDORCScores(ATAC.se,
+                                   dorcTab = DORC_df_filtered, 
+                                   geneList = DORC_genes,
+                                   normalizeATACmat = TRUE, nCores = 50)
+
+sarc_atac_pctopic[["DORC"]] <- CreateAssayObject(counts = DORC_scores)
+```
+
+# HOMER
+```{bash, eval = F}
+# Homer bugs if you have @ in your username, which is the case for all default MyDRE accounts, so you have to make a new account and ssh into it to install and run homer:
+sudo adduser titus
+sudo usermod -a -G titus
+
+# ssh into new user:
+exit
+ssh titus@10.210.167.148
+
+# Homer setup. Note this is where the @ symbol issues for our DRE usernames appear. 
+mkdir ~/HOMER
+cd ~/HOMER
+wget homer.ucsd.edu/homer/configureHomer.pl
+perl ~/HOMER/configureHomer.pl -install
+perl ~/HOMER/configureHomer.pl -install hg38
+```
+
+### Run HOMER on SCENIC+ DARs
+```{bash}
+# Running homer. This only runs on my special user without the @ symbol in the name (nicholas). Takes about 30min (run up and down in parallel as limited to 1 core).
+PATH=$PATH:~/HOMER/bin
+
+parallel "~/HOMER/bin/findMotifsGenome.pl /mnt/data/2_Users/Titus_Schluter/sarcoidosis_atac/pycisTopic/outs/region_sets/DARs_celltype/{1}_up_peaks.bed hg38 /mnt/data/2_Users/Titus_Schluter/sarcoidosis_atac/HOMER/{1}_up_peaks -size 200 -bg /mnt/data/2_Users/Titus_Schluter/sarcoidosis_atac/HOMER/background_peaks/{1}_background_peaks.bed" ::: CD4_naive CD4_memory CD8_memory CD14_Mono NK
+
+parallel "~/HOMER/bin/findMotifsGenome.pl /mnt/data/2_Users/Titus_Schluter/sarcoidosis_atac/pycisTopic/outs/region_sets/DARs_celltype/{1}_down_peaks.bed hg38 /mnt/data/2_Users/Titus_Schluter/sarcoidosis_atac/HOMER/{1}_down_peaks -size 200 -bg /mnt/data/2_Users/Titus_Schluter/sarcoidosis_atac/HOMER/background_peaks/{1}_background_peaks.bed" ::: CD4_naive CD4_memory CD8_memory CD14_Mono NK
+```
+
+# fragmentsToTn5.py (github.com/tacazares/scATAC_analysis)
+```{python}
+#!/usr/bin/python3
+
+### Convert scATAC-seq fragments to a Tn5 bed file ###
+
+# Inputs:
+
+# input_fragments: Path to input fragment tsv file
+# output directory: Path to directory to write results
+# name: Output file name
+# split: Split fragment ends into different files
+
+# Outputs:
+
+# A bed file of Tn5 sites that have been inferred from the scATAC-seq fragments file.
+# If split is True: Then output two bed files, one for each end of the fragment.
+
+######################################################
+
+###-Imports-###
+import pandas as pd
+import argparse
+import os
+
+###-Arguments-###
+parser = argparse.ArgumentParser()
+
+parser.add_argument("-i", "--input_fragments",
+                dest='FRAGMENTS', 
+                help="Input fragments file",
+                required=True)
+
+parser.add_argument("-o", "--output_dir",
+                dest='OUT_DIR', 
+                help="Output directory",
+                default="./output",
+                required=False)
+
+parser.add_argument("-n", "--name",
+                dest='NAME', 
+                help="Name to use for output file",
+                default="Tn5_IS",
+                required=False)
+
+parser.add_argument("-split", "--split",
+                action='store_true',
+                dest='SPLIT', 
+                help="Split fragment ends into seperate bed files",
+                default="False",
+                required=False)
+
+args = parser.parse_args()
+
+###-Functions-###
+def convert_fragments_to_tn5_bed(fragments_tsv, chroms, split=False):
+    """Convert scATAC fragments file to Tn5 insertion sites bed
+
+    Args:
+        fragments_tsv (str): Path to the scATAC-seq fragments file
+
+    Returns:
+        dataframe: Tn5 insertions sites in a BED formatted pandas dataframe
+    """
+    col_types = {
+                 "chr": "category", 
+                 "start": "int32", 
+                 "stop": "int32", 
+                 "barcode": "category", 
+                 "support": "int32"
+                }
+    
+    # Import fragments tsv as a dataframe
+    df = pd.read_table(fragments_tsv,
+                       header=None,
+                       names=["chr", "start", "stop", "barcode", "support"],
+                       dtype=col_types, 
+                       low_memory=False)
+    
+    df = df[df["chr"].isin(chroms)]
+    
+    # subset starts
+    df_starts = df[["chr", "start", "barcode"]].copy()
+    
+    # subset stops
+    df_ends = df[["chr", "stop", "barcode"]].copy()
+    
+    # Add a 1 to create 1 bp intervals representing the cut site
+    df_starts["stop"] = df_starts["start"].copy() + 1
+    
+    # Subtract a 1 bp interval to represent the cut site. Reference miralidlab wiki page for scATAC-seq analysis
+    df_ends["start"] = df_ends["stop"].copy() - 1
+        
+    if split:
+        # If split is True, return two dataframes, one for each end of the fragment    
+        return df_starts[["chr", "start", "stop", "barcode"]], df_ends[["chr", "start", "stop", "barcode"]]
+    
+    else:
+        # Concatenate both dataframes        
+        df_cat = pd.concat([df_starts, df_ends])
+
+        return df_cat[["chr", "start", "stop", "barcode"]]
+
+###-Constants-###
+ALL_CHRS = [
+            "chr1", "chr2", "chr3", "chr4", "chr5", "chr6",
+            "chr7", "chr8", "chr9", "chr10", "chr11", "chr12",
+            "chr13", "chr14", "chr15", "chr16", "chr17", "chr18",
+            "chr19", "chr20", "chr21", "chr22", "chrX", "chrY"
+            ]
+
+###-Workflow-###
+if args.SPLIT == True:
+    # Create file names
+    output_file_start = os.path.join(args.OUT_DIR, args.NAME + "_start.bed.gz")
+    output_file_stop = os.path.join(args.OUT_DIR, args.NAME + "_stop.bed.gz")
+
+    print("Splitting Fragment ends into individual files")
+    
+    start_interval_df, stop_interval_df = convert_fragments_to_tn5_bed(args.FRAGMENTS, ALL_CHRS, args.SPLIT)
+    
+    start_interval_df.to_csv(output_file_start, sep="\t", header=False, index=False)
+    
+    stop_interval_df.to_csv(output_file_stop, sep="\t", header=False, index=False)
+
+else:
+    # Create file names
+    output_file = os.path.join(args.OUT_DIR, args.NAME + ".bed.gz")
+    print("Splitting Fragment ends into a new BED file: " + output_file)
+
+    tn5_bed = convert_fragments_to_tn5_bed(args.FRAGMENTS, ALL_CHRS)
+
+    tn5_bed.to_csv(output_file, sep="\t", header=False, index=False)
+```

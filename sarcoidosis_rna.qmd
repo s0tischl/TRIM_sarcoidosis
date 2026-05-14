@@ -1,0 +1,567 @@
+---
+title: "sarcoidosis scRNAseq processing"
+author: "Titus Schluter"
+date: last-modified
+format: 
+  html: 
+    toc: true
+    code-fold: show
+    embed-resources: true
+engine: knitr
+editor: source
+---
+
+# Seurat
+
+```{r setup}
+# Loading packages.
+library(KEGGREST)
+library(fgsea)
+library(reshape2)
+library(msigdbr)
+library(scDblFinder)
+library(Seurat)
+library(grDevices)
+library(RColorBrewer)
+library(ggrepel)
+library(ggpmisc)
+library(ggh4x)
+library(patchwork)
+library(Matrix)
+library(DESeq2)
+library(pheatmap)
+library(ggpubr)
+library(org.Hs.eg.db)
+library(AnnotationHub)
+library(sctransform)
+library(ggbeeswarm)
+library(ensembldb)
+library(tidyverse)
+
+setOldClass("ExpData")
+
+# Setting working directory.
+setwd("/mnt/data/2_Users/Titus_Schluter/sarcoidosis_rna/")
+
+sarcoidosis_palette <- c("healthy" = "#e7e3d8",
+                         "Stable persistant" = "#9fc5e8",
+                         "Stable_persistant" = "#9fc5e8",
+                         "stable" = "#9fc5e8",
+                         "Progressive" = "#1d4c6e",
+                         "sarcoidosis" = "#1d4c6e",
+                         "progressive" = "#1d4c6e",
+                         "low_non" = "#b2d8d8",
+                         "responder" = "#006666"
+                         )
+```
+
+## Set up annotationhub
+```{r setup}
+# Preparing annotation file with Ensembl and Entrez IDs.
+ah <- AnnotationHub()
+
+human_ens <- query(ah, c("Homo sapiens", "EnsDb"))
+
+human_ens <- human_ens[["AH116860"]]
+
+gene_annotation <- genes(human_ens, return.type = "data.frame") |> 
+  select(gene_id, gene_name, entrezid, gene_biotype)
+
+gene_annotation$entrezid <- map(gene_annotation$entrezid, 1) |> 
+  unlist()
+
+rm(ah, human_ens)
+```
+
+# Preprocessing
+## Reading in count matrices and converting to seurat object (done)
+```{r}
+# Reading in count matrix. For some reason it is not working for RPMI_baseline sample, so we need to figure that out.
+sarcoidosis <- sapply(list.files("per_sample_outs/"), function(sample){
+  paste0("per_sample_outs/", sample, "/count/sample_filtered_feature_bc_matrix") |>
+    Read10X()
+  }, USE.NAMES = T)
+
+sarcoidosis <- sapply(sarcoidosis, function(sample){CreateSeuratObject(sample)}, USE.NAMES = T)
+
+sarcoidosis <- sapply(names(sarcoidosis), function(name){sarcoidosis[[name]]$sampleID <- name
+sarcoidosis[[name]]})
+
+sarcoidosis <- merge(x = sarcoidosis[[1]], y = sarcoidosis[2:length(sarcoidosis)])
+```
+
+## Quality control
+```{r, eval = F}
+# Calculating QC metric for proportion of mitochondrial reads per cell.
+sarcoidosis_subset <- subset(sarcoidosis, sampleID == "A-01" |
+                      sampleID == "A-02" |
+                      sampleID == "HC_N_01" |
+                      sampleID == "HC_N_02" |
+                      sampleID == "Healthy_2_tube1-2" |
+                      sampleID == "Healthy_4" |
+                      sampleID == "HSJ-005" |
+                      sampleID == "HSJ-032" |
+                      sampleID == "HSJ-045" |
+                      sampleID == "HSJ-073" |
+                      sampleID == "HSJ-221" |
+                      sampleID == "HSJ-222" |
+                      sampleID == "HSJ-224" |
+                      sampleID == "HSJ-226" |
+                      sampleID == "HSJ-227" |
+                      sampleID == "HSJ-228" |
+                      sampleID == "HSJ-230" |
+                      sampleID == "HSJ-231")
+
+
+
+sarcoidosis_subset$mitoRatio <- PercentageFeatureSet(object = sarcoidosis_subset, pattern = "^MT-") / 100
+
+
+VlnPlot(sarcoidosis_subset, features = c("mitoRatio"), group.by = "sampleID", pt.size = 0,y.max = 0.2)
+
+
+# Updating metadata, adding cellID, sample metadata, and other metrics.
+metadata <- sarcoidosis_subset@meta.data
+metadata$cellID <- rownames(metadata)
+
+metadata <- metadata |> 
+  rename(nUMI = nCount_RNA,
+         nGene = nFeature_RNA) |>
+  mutate(log10GenesPerUMI = log10(nGene) / log10(nUMI),
+         log10UMI = log10(nUMI),
+         log10Gene = log10(nGene))
+
+sarcoidosis_subset@meta.data <- metadata
+
+# Plotting default Seurat QC plots. Data appears generally high quality, with many genes/RNA molecules detected per cell and most cells having low mitochondrial gene expression.
+VlnPlot(sarcoidosis_subset, features = c("nGene", "mitoRatio", "log10UMI"), pt.size = 0, group.by = "sampleID")
+
+FeatureScatter(sarcoidosis_subset, feature1 = "log10UMI", feature2 = "log10Gene", plot.cor = F) +
+  scale_x_continuous(limits = c(0, NA), expand = expansion(mult = c(0, 0.05)),
+                     labels = scales::comma) +
+  scale_y_continuous(limits = c(0, NA), expand = expansion(mult = c(0, 0))) +
+  NoLegend()
+
+FeatureScatter(sarcoidosis_subset, feature1 = "log10UMI", feature2 = "log10GenesPerUMI", plot.cor = F) +
+  scale_x_continuous(limits = c(0, NA), expand = expansion(mult = c(0, 0.05)),
+                     labels = scales::comma) +
+  scale_y_continuous(limits = c(0, NA), expand = expansion(mult = c(0, 0.05)),
+                     labels = scales::comma) +
+  NoLegend() +
+  stat_function(fun = function(log10UMI) -0.085 * log10UMI + 1.18) +
+  geom_vline(xintercept = 3)
+
+sarcoidosis_filtered <- sarcoidosis_subset |> 
+  subset(log10GenesPerUMI > 0.75) |> 
+  subset(mitoRatio <= 0.07) |> 
+  subset(nGene >= 1000) |> 
+  subset(log10GenesPerUMI > -0.085 * log10UMI + 1.18)
+
+
+ncol(sarcoidosis_subset) - ncol(sarcoidosis_filtered)
+(ncol(sarcoidosis_subset) - ncol(sarcoidosis_filtered)) / ncol(sarcoidosis_subset)
+
+
+VlnPlot(sarcoidosis_filtered, features = c("nGene", "mitoRatio", "log10UMI"), pt.size = 0, group.by = "orig.ident") &
+  scale_y_continuous(limits = c(0, NA), expand = expansion(mult = c(0, 0.05)),
+                     labels = scales::comma) &
+  theme(axis.title.x = element_blank(),
+        axis.ticks.x = element_blank(),
+        axis.text.x = element_blank())
+```
+
+```{r, eval = F}
+# Determining which cells might be doublets. Assuming 3% of cells as per Parse FAQ.
+# Merging the layers into a single object.
+sarcoidosis_filtered[["RNA"]] <- JoinLayers(sarcoidosis_filtered[["RNA"]])
+
+filtered_sce <- as.SingleCellExperiment(sarcoidosis_filtered)
+filtered_sce <- scDblFinder(filtered_sce, dbr = 0.05)
+
+sarcoidosis_filtered$scDblFinder.score <- filtered_sce$scDblFinder.score
+
+metadata <- sarcoidosis_filtered@meta.data
+
+metadata |>
+  mutate(Threshold = scDblFinder.score > 0.25) |>
+  ggplot(aes(x = scDblFinder.score, fill = Threshold)) +
+  geom_histogram() +
+  scale_y_continuous(expand = expansion(mult = c(0, 0.05))) +
+  theme_bw()
+
+sarcoidosis_filtered <- sarcoidosis_filtered |> 
+  subset(scDblFinder.score < 0.25)
+
+# Analyzing clean metadata: Removed  cells.
+metadata <- sarcoidosis_filtered@meta.data
+
+# Plotting number of cells per sample.
+sarcoidosis_filtered@meta.data |>
+  ggplot(aes(x = sampleID)) + 
+	geom_bar() +
+	labs(y = "Number of cells") +
+  scale_y_continuous(expand = expansion(c(0, 0.05)), label = scales::comma) +
+  theme_bw() +
+	theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1),
+	      axis.title.x = element_blank(),
+	      panel.grid.major.x = element_blank(),
+	      legend.title = element_blank())
+```
+
+## Clustering/integration
+```{r}
+sarcoidosis_filtered[["RNA"]] <- split(sarcoidosis_filtered[["RNA"]], f = sarcoidosis_filtered$sampleID)
+
+sarcoidosis_integrated <- sarcoidosis_filtered |> 
+  NormalizeData() |> 
+  FindVariableFeatures(nFeatures = 2000) |>
+  ScaleData() |> 
+  RunPCA() |> 
+  FindNeighbors(dims = 1:40, reduction = "pca") |> 
+  FindClusters(resolution = 1, cluster.name = "clusters.1.unintegrated")
+
+
+
+sarcoidosis_integrated <- RunUMAP(sarcoidosis_integrated,
+                                  dims = 1:40,
+                                  reduction = "pca",
+                                  reduction.name = "umap.unintegrated")
+
+sarcoidosis_integrated <- IntegrateLayers(sarcoidosis_integrated,
+                                          method = HarmonyIntegration,
+                                          orig.reduction = "pca",
+                                          new.reduction = "harmony")
+
+sarcoidosis_integrated <- FindNeighbors(sarcoidosis_integrated,
+                                        dims = 1:40,
+                                        reduction = "harmony") |> 
+                          FindClusters(resolution = 1,
+                                       cluster.name = "clusters.1.harmony")
+
+sarcoidosis_integrated <- RunUMAP(sarcoidosis_integrated,
+                      dims = 1:40,
+                      reduction = "harmony",
+                      reduction.name = "umap.harmony")
+
+saveRDS(sarcoidosis_integrated, "sarcoidosis_integrated.rds")
+
+#sarcoidosis_integrated <- readRDS("sarcoidosis_integrated.rds")
+```
+
+## Cluster Annotation 
+
+### Cluster identification
+```{r}
+# Labeling our clusters based on Azimuth labels.
+Idents(sarcoidosis_integrated) <- sarcoidosis_integrated$clusters.1.harmony
+
+tmp <- tibble(Var1 = "",
+              Freq = 0,
+              cluster_id = 0) |> 
+  slice(-1)
+
+for(i in unique(sarcoidosis_integrated@meta.data$clusters.1.harmony)) {
+  tmp1 <- table(sarcoidosis_integrated@meta.data |> filter(clusters.1.harmony == i) |> pull(predicted.celltype.l2)) |> as.data.frame() |> mutate(cluster_id = i)
+  
+  tmp <- rbind(tmp, tmp1)
+}
+
+tmp <- tmp |> 
+  select(Cluster_ID = cluster_id, predicted.celltype.l2 = Var1, Freq) |> 
+  mutate(Cluster_ID = as.integer(Cluster_ID)) |> 
+  arrange(Cluster_ID, desc(Freq))
+
+tmp2 <- tmp |> 
+  group_by(Cluster_ID) |> 
+  summarize(N = sum(Freq))
+
+tmp3 <- tmp |> 
+  left_join(tmp2) |> 
+  mutate(Percent = (Freq / N) * 100) |> 
+  filter(Percent > 20)
+
+tmp4 <- tmp3 |> 
+  select(Cluster_ID, predicted.celltype.l2) |> 
+  group_by(Cluster_ID) |> 
+  summarise(cluster_names1 = paste(predicted.celltype.l2, collapse = "/")) |> 
+  mutate(cluster_names1 = make.unique(cluster_names1, sep = " "),
+         cluster_names1 = factor(cluster_names1),
+         Cluster_ID = factor(Cluster_ID))
+
+sarcoidosis_integrated@meta.data <- sarcoidosis_integrated@meta.data |> 
+  #select(-cluster_names1) |> 
+  left_join(tmp4, by = c("clusters.1.harmony" = "Cluster_ID")) |> 
+  as.data.frame()
+
+rownames(sarcoidosis_integrated@meta.data) <- sarcoidosis_integrated@meta.data$cellID
+```
+
+```{r}
+# Plotting canonical markers for PBMC cell types in flow. Based on antibodies-online CD marker panel table, OMIP-69 flow panel, and 50 marker panel. Found genes using genecards. Some flow markers are combinations of different proteins, so can't just use a single gene.
+# CD3/CD2 = T cells (CD3G/CD3D/CD3E/CD2)
+# CD4 = T helper cells (CD4)
+# CD8 = cytotoxic T cells (CD8A/CD8B)
+# CCR7 = Naive T (CCR7)
+# CD25/FOXP3 = Treg (IL2RA/FOXP3)
+# TCRgd = gdT (TRG and TRD)
+# CXCR5 = Tfh (also sometimes CXCR3 and CCR6)
+# IL17A = Th17
+# CD69 = Activated T cells
+# CD161 = MAIT (KLRB1)
+# CD56 = NK cells (NCAM1)
+# CD19/CD20 = B cells (CD19/MS4A1)
+# IGD/IGM = naive B cells (IGHD/IGHM)
+# CD27 = plasmablast
+# HLA-DR = Antigen presenting cell (HLA-DRA)
+# CD14 = Classical monocytes (CD14)
+# CD16 = Non-classical monocytes and mature natural killers (FCGR3A) 
+# CD11C = dendritic cells (ITGAX)
+# CD1c = cDC1 (CD1C)
+# CD123 = plasmacytoid dendritic cells (IL3RA)
+# CD34 = HSPC (CD34)
+# CD33 + ITGAM (CD11B) = macrophage
+```
+
+```{r}
+sarcoidosis_integrated@meta.data <- sarcoidosis_integrated@meta.data |> 
+  mutate(cluster_names_manual = case_when(cluster_names1 == "NK" ~ "NK",
+                                          cluster_names1 == "NK Proliferating/dnT" ~ "Proliferating",
+                                          cluster_names1 == "MAIT" ~ "MAIT",
+                                          cluster_names1 == "CD14 Mono/CD16 Mono" ~ "Mono_strange",
+                                          cluster_names1 == "CD16 Mono" ~ "CD16_Mono",
+                                          cluster_names1 == "HSPC" ~ "HSPC",
+                                          cluster_names1 == "CD14 Mono" ~ "CD14_Mono_1",
+                                          cluster_names1 == "CD14 Mono 1" ~ "CD14_Mono_2",
+                                          cluster_names1 == "CD14 Mono 2" ~ "CD14_Mono_3",
+                                          cluster_names1 == "CD14 Mono 3" ~ "CD14_Mono_Platelet",
+                                          cluster_names1 == "pDC" ~ "pDC",
+                                          cluster_names1 == "cDC2/CD14 Mono" ~ "DC",
+                                          cluster_names1 == "NK/NK_CD56bright" ~ "early_NK",
+                                          cluster_names1 == "B naive" ~ "B_naive",
+                                          cluster_names1 == "B intermediate/B memory" ~ "B_memory",
+                                          cluster_names1 == "Plasmablast" ~ "Plasmablast",
+                                          cluster_names1 == "Treg/CD4 TCM" ~ "Treg",
+                                          cluster_names1 == "CD8 Naive" ~ "CD8_naive",
+                                          cluster_names1 == "CD4 TCM" ~ "CD4_memory",
+                                          cluster_names1 == "CD8 TEM" ~ "CD8_memory",
+                                          cluster_names1 == "CD8 TEM 1" ~ "CD8_memory",
+                                          cluster_names1 == "NK/CD8 TEM 1" ~ "NKT strange",
+                                          cluster_names1 == "NK/CD8 TEM" ~ "NKT_like",
+                                          cluster_names1 == "CD4 TCM/CD4 Naive" ~ "CD4_naive",
+                                          cluster_names1 == "CD4 TCM/CD4 Naive 1" ~ "CD4_naive",
+                                    TRUE ~ cluster_names1
+                                    
+                                    )
+         )
+
+sarcoidosis_integrated@meta.data <- sarcoidosis_integrated@meta.data |> 
+  mutate(cluster_names_pseudobulk = case_when(cluster_names1 == "NK" ~ "NK",
+                                          cluster_names1 == "NK Proliferating/dnT" ~ "excl",
+                                          cluster_names1 == "MAIT" ~ "MAIT",
+                                          cluster_names1 == "CD14 Mono/CD16 Mono" ~ "excl",
+                                          cluster_names1 == "CD16 Mono" ~ "CD16_Mono",
+                                          cluster_names1 == "HSPC" ~ "excl",
+                                          cluster_names1 == "CD14 Mono" ~ "CD14_Mono",
+                                          cluster_names1 == "CD14 Mono 1" ~ "CD14_Mono",
+                                          cluster_names1 == "CD14 Mono 2" ~ "CD14_Mono",
+                                          cluster_names1 == "CD14 Mono 3" ~ "excl",
+                                          cluster_names1 == "pDC" ~ "pDC",
+                                          cluster_names1 == "cDC2/CD14 Mono" ~ "DC",
+                                          cluster_names1 == "NK/NK_CD56bright" ~ "early_NK",
+                                          cluster_names1 == "B naive" ~ "B_naive",
+                                          cluster_names1 == "B intermediate/B memory" ~ "B_memory",
+                                          cluster_names1 == "Plasmablast" ~ "excl",
+                                          cluster_names1 == "Treg/CD4 TCM" ~ "Treg",
+                                          cluster_names1 == "CD8 Naive" ~ "CD8_naive",
+                                          cluster_names1 == "CD4 TCM" ~ "CD4_memory",
+                                          cluster_names1 == "CD8 TEM" ~ "CD8_memory",
+                                          cluster_names1 == "CD8 TEM 1" ~ "CD8_memory",
+                                          cluster_names1 == "NK/CD8 TEM 1" ~ "excl",
+                                          cluster_names1 == "NK/CD8 TEM" ~ "NKT_like",
+                                          cluster_names1 == "CD4 TCM/CD4 Naive" ~ "CD4_naive",
+                                          cluster_names1 == "CD4 TCM/CD4 Naive 1" ~ "CD4_naive",
+                                    TRUE ~ cluster_names1
+                                    
+                                    )
+         )
+
+```
+
+```{r}
+Idents(sarcoidosis_integrated) <- sarcoidosis_integrated$cluster_names_pseudobulk
+p1 <- DimPlot(object = sarcoidosis_integrated, 
+              reduction = "umap.harmony", 
+              label = TRUE,
+              label.size = 3,
+              raster = F) + NoLegend()
+
+p2 <- DotPlot(sarcoidosis_integrated, features =  c("CD3E", "CD4", "CD8A", "CCR7", "CD69", "IL2RA", "FOXP3", "KLRB1", "NCAM1", "FCGR3A", "CD19", "MS4A1", "IGHD", "IGHM", "CD27", "CD33", "ITGAM", "CD14", "ITGAX", "CD1C", "IL3RA", "CD34", "IL7R", "MKI67", "CCR4", "CCL5", "ITGA2B"), cluster.idents = T, ) +
+  scale_color_gradient2(low = "blue", mid = "grey90", high = "red") +
+  scale_radius(limits = c(0, 100)) +
+  RotatedAxis() +
+  theme(axis.title.x = element_blank(),
+        axis.title.y = element_blank())
+
+
+p1 + p2
+
+# ggsave("output/celltype_annotation.pdf", height = 8, width = 16)
+```
+
+### Pseudobulk: Create Pseudobulk DESeqDataSets
+```{r}
+pops <- sarcoidosis_integrated$cluster_names_pseudobulk |> unique()
+
+library(DESeq2)
+pseudobulk <- sapply(pops, function(pop){
+bulk <- sarcoidosis_integrated |> 
+  subset(state != "CGD") |> 
+  subset(cluster_names_pseudobulk == pop) |>
+AggregateExpression(group.by = "SampleID", return.seurat = F, normalization.method = NULL)
+
+bulk <- bulk$RNA
+colnames(bulk) <- str_replace_all(colnames(bulk), "-", "_")
+colnames(bulk)[1:4] <- str_replace(colnames(bulk)[1:4], "g", "")
+
+libsize <- bulk |>
+  as.data.frame() |>
+  summarise(across(everything(), ~ sum(.x))) |>
+  t() |>
+  as.data.frame() |>
+  rename(libsize = V1) |> 
+  rownames_to_column("SampleID")
+
+sample_info_bulk <- sample_info |>
+  mutate(state = factor(state, levels = c("healthy", "sarcoidosis"))) |> left_join(libsize)
+
+bulk_anno <- data.frame(SampleID = colnames(bulk)) |> 
+  left_join(sample_info_bulk)
+
+dds <- DESeqDataSetFromMatrix(bulk, bulk_anno, ~state)
+
+dds <- DESeq(dds)
+return(dds)
+})
+
+write_rds(pseudobulk, "output/pseudobulk.rds")
+```
+
+### Pseudobulk: PW analysis
+```{r}
+library(fgsea)
+library(msigdbr)
+
+pops <- list.files("output/pseudobulk/")
+
+hallmarks <- msigdbr(collection = "H")
+go <- msigdbr(collection = "C5", subcollection = "GO:BP")
+kegg <- msigdbr(collection = "C2", subcollection = "CP:KEGG_LEGACY")
+reactome <- msigdbr(collection = "C2", subcollection = "CP:REACTOME")
+
+allpws <- rbind(hallmarks, go, kegg, reactome)
+allpws_gsea <- split(allpws, f = allpws$gs_name)
+allpws_gsea <- sapply(allpws_gsea, function(pathway){
+  pathway |> pull(gene_symbol)
+})
+
+gse_hm <- lapply(names(pseudobulk), function(pop){
+  
+gse_df <- pseudobulk[[pop]] |> 
+  results(contrast = c("state", "sarcoidosis", "healthy")) |> 
+  as.data.frame() |> 
+  subset(baseMean > 50) |>
+  arrange(-stat)
+
+ranked_genes <- gse_df$stat
+names(ranked_genes) <- rownames(gse_df)
+
+#gse_list <- gse_list[!is.na(names(gse_list))]
+set.seed(42)
+gse_hm <- fgsea(pathways = allpws_gsea, stats = ranked_genes) |> 
+  as.data.frame() |> 
+  mutate(celltype = pop)
+
+return(gse_hm)
+}) |>
+  bind_rows()
+
+write_csv(gse_hm, "output/gsea_allpws.csv")
+```
+
+### Pseudobulk: Export/count DE genes and GO terms
+```{r}
+pops <- list.files("output/pseudobulk/")
+
+all_fc <- lapply(pops, function(pop){
+readRDS(paste0("output/pseudobulk/", pop, "/dds.rds")) |> 
+    results(name = "state_sarcoidosis_vs_healthy") |> 
+    as.data.frame() |> 
+    mutate(direction = case_when(log2FoldChange > 0 ~ "up",
+                               log2FoldChange < 0 ~ "down"),
+           celltype = pop) |> 
+    rownames_to_column("gene")
+}) |> bind_rows()
+
+write_csv(all_fc, "output/all_fc.csv")
+```
+
+# SCENIC+
+## Create AnnData for SCENIC+
+```{r}
+sarcoidosis_sce <- as.SingleCellExperiment(sarcoidosis_integrated)
+
+# install.packages("pak")
+# pak::pak(c("scverse/anndataR"))
+
+adata <- anndataR::as_AnnData(sarcoidosis_sce)
+
+adata$write_h5ad("sarcoidosis_integrated.h5ad")
+```
+
+##Run GSEA on SCENIC+ regulons
+```{r}
+all_fc <- read_csv("output/all_fc.csv")
+
+eregulons <- read_tsv("../sarcoidosis_atac/outs_scplus/eRegulon_direct.tsv")
+
+eregulons_gsea <- eregulons |> 
+  dplyr::select(Gene, eRegulon_name) |> 
+  split(~eRegulon_name) |> 
+  sapply(function(set){
+  set$Gene
+})
+
+gse_hm_eregulons <- lapply(names(pseudobulk), function(pop){
+  
+gse_df <- all_fc |> 
+  subset(celltype == pop) |> 
+  subset(baseMean > 50) |>
+  arrange(-stat)
+
+ranked_genes <- gse_df$stat
+names(ranked_genes) <- gse_df$gene
+
+#gse_list <- gse_list[!is.na(names(gse_list))]
+
+gse_hm <- fgsea(pathways = c(eregulons_gsea, eregulons_extended_gsea), stats = ranked_genes, eps = 0) |> 
+  as.data.frame() |> 
+  mutate(celltype = pop)
+
+return(gse_hm)
+}) |> bind_rows()
+```
+
+## Generate AUC for scRNAseq data
+```{r}
+library(AUCell)
+
+sarcoidosis_integrated[["RNA"]]$data
+
+cells_AUC <- AUCell_run(sarcoidosis_integrated[["RNA"]]$data, geneSets = eregulons_gsea)
+
+cells_AUC_mtx <- getAUC(cells_AUC)
+
+sarcoidosis_integrated[["AUC"]] <- CreateAssayObject(counts = cells_AUC_mtx)
+
+write_rds(sarcoidosis_integrated, "sarcoidosis_integrated.rds")
+```

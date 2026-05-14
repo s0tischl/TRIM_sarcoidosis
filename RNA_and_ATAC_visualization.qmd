@@ -1,0 +1,4320 @@
+---
+title: "scRNA and scATAC data analysis and visualization"
+format: html
+editor: source
+---
+
+# R setup
+```{r}
+#library(ggseqlogo)
+library(ggpmisc)
+library(msigdbr)
+library(ggrepel)
+library(ggh4x)
+library(harmony)
+library(DESeq2)
+library(clusterProfiler)
+library(readxl)
+library(fgsea)
+library(AUCell)
+library(BSgenome.Hsapiens.UCSC.hg38)
+library(GenomicRanges)
+library(rtracklayer)
+library(Biostrings)
+library(ggseqlogo)
+library(TFBSTools)
+library(ggpubr)
+library(ggtext)
+library(pheatmap)
+library(biomaRt)
+library(ggbeeswarm)
+library(AnnotationHub)
+library(GenomicRanges)
+library(Seurat)
+library(Signac)
+library(org.Hs.eg.db)
+library(tidyverse)
+
+conflicted::conflict_prefer_all("dplyr")
+
+setwd("/Users/titus/OneDrive/R/sarcoidosis/SARC_Pseudobulk/")
+mem.maxVSize(40000)
+```
+
+## Load Data
+
+```{r}
+sarc_atac <- readRDS("ATAC/sarc_atac_pctopic.rds")
+sarcoidosis_integrated <- readRDS("RNA/sarcoidosis_integrated.rds")
+#pseudobulk_atac <- readRDS("ATAC/pseudobulk.rds")
+#pseudobulk_rna <- readRDS("RNA/pseudobulk.rds")
+#all_fc_atac <- read.csv("ATAC/all_fc.csv")
+#all_fc_rna <- read.csv("RNA/all_fc.csv")
+#all_fc_skin <- read.csv("bocklab_skin_granuloma/all_fc_skin.csv")
+
+#gsea_all_pws <- read.csv("RNA/gsea_allpws.csv")
+#ora_all_pws <- read.csv("ATAC/ora_all.csv")
+
+#eRegulons <- read_tsv("ATAC/eRegulon_direct.tsv")
+
+#pseudobulk_skin <- readRDS("bocklab_skin_granuloma/pseudobulk_skin.rds")
+```
+
+## UMAP of RNA and ATAC
+```{r}
+Idents(sarcoidosis_integrated) <- "cluster_names_pseudobulk"
+Idents(sarc_atac) <- "cluster_names_pseudobulk"
+DimPlot(object = sarcoidosis_integrated, 
+              reduction = "umap.harmony", 
+              label = TRUE,
+              label.size = 3,
+              raster = F, order = c( "MAIT","Treg", "CD4_naive", "CD4_memory",  "CD8_memory", "CD8_Naive", "early_NK", "NK", "DC", "CD16_Mono", "CD14_Mono", "pDC", "B_memory", "B_naive", "excl"), stroke.size = 0, pt.size = 0.5) +
+  scale_color_manual(values = c("excl" = "grey80",
+                                "MAIT"="#af4646",
+                                "Treg" = "#c1727d",
+                                "CD4_memory" = "#005187",
+                                "CD4_naive" = "#7266a3",
+                                "CD8_memory" = "#78adb7",
+                                "CD8_naive" = "#3d85c6",
+                                "NK" = "#4c9a77",
+                                "early_NK" = "#1b7975",
+                                "B_naive" = "#f06a63",
+                                "B_memory" = "#ff8e5e",
+                                "CD14_Mono" = "#ffcc3d",
+                                "Mono_intermediate" = "#e9de97",
+                                "CD16_Mono" = "#5f6880",
+                                "DC" = "#ef7923",
+                                "NKT_like" = "#75bca9",
+                                "pDC" = "#39c47d")) +
+  theme_bw() +
+  scale_x_continuous(expand = expansion(mult = c(0.1, 0.1))) +
+  scale_y_continuous(expand = expansion(mult = c(0.1, 0.1))) +
+  theme(legend.position = "none",
+        panel.grid = element_blank(),
+        axis.ticks = element_blank(),
+        axis.text = element_blank(),
+        axis.title.x = element_text(hjust = 0),
+        axis.title.y = element_text(hjust = 0)) +
+   force_panelsizes(rows = unit(3, "in"),
+                    cols = unit(3, "in")) +
+  xlab("UMAP1") +
+  ylab("UMAP2") +
+  ggtitle("RNA") -> p1
+
+DimPlot(object = sarc_atac, 
+              reduction = "umap.harmony", 
+              label = TRUE,
+              label.size = 3,
+              raster = F, order = c( "MAIT","Treg", "CD4_naive", "CD4_memory",  "CD8_memory", "CD8_Naive", "early_NK", "NK", "DC", "CD16_Mono", "CD14_Mono", "pDC", "B_memory", "B_naive", "excl"), stroke.size = 0, pt.size = 0.5) +
+  scale_color_manual(values = c("excl" = "grey80",
+                                "MAIT"="#af4646",
+                                "Treg" = "#c1727d",
+                                "CD4_memory" = "#005187",
+                                "CD4_naive" = "#7266a3",
+                                "CD8_memory" = "#78adb7",
+                                "CD8_naive" = "#3d85c6",
+                                "NK" = "#4c9a77",
+                                "early_NK" = "#1b7975",
+                                "B_naive" = "#f06a63",
+                                "B_memory" = "#ff8e5e",
+                                "CD14_Mono" = "#ffcc3d",
+                                "Mono_intermediate" = "#e9de97",
+                                "CD16_Mono" = "#5f6880",
+                                "DC" = "#ef7923",
+                                "NKT_like" = "#75bca9",
+                                "pDC" = "#39c47d")) +
+  theme_bw() +
+  scale_x_continuous(expand = expansion(mult = c(0.1, 0.1))) +
+  scale_y_continuous(expand = expansion(mult = c(0.1, 0.1))) +
+  theme(legend.position = "none",
+        panel.grid = element_blank(),
+        axis.ticks = element_blank(),
+        axis.text = element_blank(),
+        axis.title.x = element_text(hjust = 0),
+        axis.title.y = element_text(hjust = 0)) +
+   force_panelsizes(rows = unit(3, "in"),
+                    cols = unit(3, "in")) +
+  xlab("UMAP1") +
+  ylab("UMAP2") +
+  ggtitle("ATAC") -> p2
+
+p1 + p2
+                                
+# ggsave("output/beautiful_umap.pdf", height = 5, width = 5)
+```
+
+### ATAC and RNA frequency correlation
+```{r}
+celltype_palette <-  c("excl" = "grey80",
+                                "MAIT"="#af4646",
+                                "Treg" = "#c1727d",
+                                "CD4_memory" = "#005187",
+                                "CD4_naive" = "#7266a3",
+                                "CD8_memory" = "#78adb7",
+                                "CD8_naive" = "#3d85c6",
+                                "NK" = "#4c9a77",
+                                "early_NK" = "#1b7975",
+                                "B_naive" = "#f06a63",
+                                "B_memory" = "#ff8e5e",
+                                "CD14_Mono" = "#ffcc3d",
+                                "CD16_Mono" = "#5f6880",
+                                "DC" = "#ef7923",
+                                "NKT_like" = "#75bca9",
+                                "pDC" = "#39c47d")
+
+
+metadata_rna <- sarcoidosis_integrated[[]]
+metadata_atac <- sarc_atac[[]]
+
+# metadata_atac |> 
+#   mutate(SampleID = case_when(SampleID == "HSJ_230" ~ "HSJ_224",
+#                               SampleID == "HSJ_224" ~ "HSJ_230",
+#                               SampleID == "HSJ_228" ~ "HSJ_228",
+#                               TRUE ~ SampleID)) -> sarc_atac[[]]
+#rm(sarc_atac_cv)
+
+
+ref_atac <- metadata_atac |> 
+  subset(SampleID != "CGD001" &
+         SampleID != "CGD002") |> 
+  group_by(SampleID) |> 
+  summarise(total_atac = n())
+
+ref_atac
+
+paste0(metadata_atac$pool_cluster, "_", metadata_atac$SampleID) |> table()
+
+ref <- metadata_rna |>
+  group_by(SampleID) |> 
+  summarise(total_rna = n()) |> 
+  mutate(sampleID = str_replace_all(SampleID, "-", "_")) |> 
+  left_join(ref_atac)
+
+n_atac <- metadata_atac |>
+  group_by(SampleID, cluster_names_pseudobulk) |> 
+  summarise(n_atac = n())
+
+n_rna <- metadata_rna |> 
+  group_by(SampleID, cluster_names_pseudobulk) |> 
+  summarise(n_rna = n())
+
+n_atac |> 
+  subset(!SampleID %in% c("CGD001", "CGD002")) |> 
+  left_join(n_rna) |> 
+  left_join(ref) |> 
+  mutate(freq_atac = log10(n_atac/total_atac),
+         freq_rna = log10(n_rna/total_rna)) |> 
+  subset(cluster_names_pseudobulk != "excl") |>
+  ggplot(aes(x = freq_atac, y = freq_rna)) +
+  geom_point(aes(color = cluster_names_pseudobulk)) +
+  scale_color_manual(values = celltype_palette) +
+  theme_bw() +
+  theme(legend.title = element_blank()) +
+  force_panelsizes(rows = unit(3, "in"),
+                   cols = unit(3, "in")) +
+  ylab("log10(frequency) RNA") +
+  xlab("log10(frequency) ATAC") -> p3
+
+p1 + p2 + p3
+
+#ggsave("ATAC_RNA_correlation.pdf", height = 5, width = 15)
+```
+
+## Pseudobulk analysis:
+```{r}
+sample_info <- readxl::read_xlsx("250804_Sarcoidosis_patient_metadata.xlsx") |> 
+  mutate(pool = case_when(`scATAC pool` == "1.1" ~ "pool_1",
+                          `scATAC pool` == "2.1" ~ "pool_2_1",
+                          `scATAC pool` == "2.2" ~ "pool_2_2",
+                          `scATAC pool` == "3.1" ~ "pool_3_1",
+                          `scATAC pool` == "3.2" ~ "pool_3_2"))
+
+pops <- sarc_atac$cluster_names_pseudobulk |> unique()
+
+pseudobulk_atac <- sapply(pops, function(pop){
+bulk <- sarc_atac |> 
+  subset(state != "CGD") |> 
+  subset(cluster_names_pseudobulk == pop) |>
+AggregateExpression(group.by = "SampleID", return.seurat = F, normalization.method = NULL)
+
+bulk <- bulk$ATAC
+colnames(bulk) <- str_replace_all(colnames(bulk), "-", "_")
+colnames(bulk)[1:4] <- str_replace(colnames(bulk)[1:4], "g", "")
+
+libsize <- bulk |>
+  as.data.frame() |>
+  summarise(across(everything(), ~ sum(.x))) |>
+  t() |>
+  as.data.frame() |>
+  rename(libsize = V1) |> 
+  rownames_to_column("SampleID")
+
+sample_info_bulk <- sample_info |>
+  mutate(state = factor(state, levels = c("healthy", "sarcoidosis"))) |> left_join(libsize)
+
+bulk_anno <- data.frame(SampleID = colnames(bulk)) |> 
+  left_join(sample_info_bulk)
+
+dds <- DESeqDataSetFromMatrix(bulk, bulk_anno, ~state + pool + Sex)
+
+peaks.keep <- rownames(dds)[!(str_detect(rownames(dds), "X-") | str_detect(rownames(dds), "Y-"))]
+peaks.keep <- peaks.keep[str_detect(peaks.keep, "chr")]
+
+dds <- dds[rownames(dds) %in% peaks.keep,]
+
+detected <- dds |> 
+  counts() |> 
+  rowMeans()
+
+detected <- detected[detected > 10] |> names()
+
+dds <- dds[rownames(dds) %in% detected,]
+
+dds <- DESeq(dds)
+return(dds)
+})
+
+#write_rds(pseudobulk_atac, "ATAC/pseudobulk.rds")
+```
+
+### Plot PCAs
+```{r}
+sample_info <- readxl::read_xlsx("250804_Sarcoidosis_patient_metadata.xlsx") |> 
+  mutate(pool = case_when(`scATAC pool` == "1.1" ~ "pool_1",
+                          `scATAC pool` == "2.1" ~ "pool_2_1",
+                          `scATAC pool` == "2.2" ~ "pool_2_2",
+                          `scATAC pool` == "3.1" ~ "pool_3_1",
+                          `scATAC pool` == "3.2" ~ "pool_3_2"))
+
+pca_rna <- pseudobulk_rna$CD14_Mono |> 
+  counts() |>
+  rlog() |> 
+  t() |> 
+  prcomp()
+
+pct_rna <- pca_rna$sdev^2 / sum(pca_rna$sdev^2) * 100
+pct_rna <- round(pct_rna, digits = 1)
+
+pca <- pseudobulk_atac$CD14_Mono |> 
+  counts() |>
+  rlog() |> 
+  t() |> 
+  prcomp()
+
+pct <- pca$sdev^2 / sum(pca$sdev^2) * 100
+pct <- round(pct, digits = 1)
+
+pca_rna$x |>
+  as.data.frame() |>
+  rownames_to_column("SampleID") |> 
+  left_join(sample_info, "SampleID") |> 
+  ggplot(aes(PC1, PC2, color = state)) +
+ #scale_fill_manual(values = c("")) +
+  geom_point(size = 3) +
+  theme_bw() +
+  #theme(legend.position = "none") +
+  force_panelsizes(rows = unit(2, "in"),
+                   cols = unit(2, "in")) +
+  xlab(paste0("PC1 ", "(", pct_rna[1], "%)")) +
+  ylab(paste0("PC2 ", "(", pct_rna[2], "%)")) +
+  scale_color_manual(values = c("healthy" = "grey70",
+                              "sarcoidosis" = "#1d4c6e")) +
+  ggtitle("RNA") -> pca1
+
+pca$x |>
+  as.data.frame() |>
+  rownames_to_column("SampleID") |> 
+  left_join(sample_info, "SampleID") |>
+  ggplot(aes(PC1, PC2, color = state)) +
+ #scale_fill_manual(values = c("")) +
+  geom_point(size = 3) +
+  theme_bw() +
+  force_panelsizes(rows = unit(2, "in"),
+                   cols = unit(2, "in")) +
+  xlab(paste0("PC1 ", "(", pct[1], "%)")) +
+  ylab(paste0("PC2 ", "(", pct[2], "%)")) +
+  scale_color_manual(values = c("healthy" = "grey70",
+                              "sarcoidosis" = "#1d4c6e")) +
+  ggtitle("ATAC") -> pca2
+
+ggarrange(pca1, pca2, ncol = 1, align = "v")
+
+ggsave("plots/CD14_Mono_PCA_state.pdf", height = 5.5, width = 5)
+```
+
+### RNA Volcano plot of CEBPB regulon
+
+```{r}
+eRegulons <- read_tsv("ATAC/eRegulon_direct.tsv") |> 
+  rbind(read_tsv("ATAC/eRegulons_extended.tsv"))
+eregulons_gsea <- eRegulons |> 
+  dplyr::select(Gene, eRegulon_name) |> 
+  split(~eRegulon_name) |> 
+  sapply(function(set){
+  set$Gene
+})
+
+
+cebpb <- eregulons_gsea$`CEBPB_direct_+/+`
+
+all_fc_rna |>
+  subset(celltype == "CD14_Mono") |> 
+  subset(!is.na(padj)) |> 
+  mutate(nlog10p = -log10(padj),
+         signif = case_when(padj < 0.05 & log2FoldChange > 0 ~ "sarcoidosis",
+                            padj < 0.05 & log2FoldChange < 0 ~ "healthy",
+                            TRUE ~ "non_signif"),
+         in_cebpb = gene%in%cebpb) |> 
+  arrange(in_cebpb) -> tmp
+
+tmp |> 
+  ggplot(aes(x = log2FoldChange, y = nlog10p)) +
+  geom_point(aes(color = in_cebpb), size = 3) +
+  scale_color_manual(values = c("FALSE" = "grey70",
+                               "TRUE" = "steelblue")) +
+  geom_vline(xintercept = c(-0.5, 0.5), color = "grey50") +
+  geom_hline(yintercept = -log10(0.05), color = "grey50") +
+  geom_text_repel(aes(label = ifelse(in_cebpb %in% c("TRUE", "CEBPB") & log2FoldChange > 0.5 & padj < 1e-5, gene, "")),
+                  max.overlaps = Inf,
+                  direction = "y",
+                  nudge_x = 3 - tmp$log2FoldChange,
+                  nudge_y = 0,
+                  segment.size = 0.2,
+                  vjust = 0,
+                  hjust = 0,
+                  size = 3) +
+  #ggtitle(pop) +
+  scale_x_continuous(limits = c(-4.5, 4.5)) +
+  scale_y_continuous(expand = expansion(mult = c(0.01, 0.05))) +
+  ylab("-log10(p.adj)") +
+  xlab("log2fc sarcoidosis vs healthy") +
+  theme_bw() +
+  theme(legend.position = "none",
+        axis.text = element_text(size = 15),
+        axis.title = element_text(size = 15)) +
+  force_panelsizes(rows = unit(4, "in"),
+                   cols = unit(4, "in")) +
+  xlab("log2FC(sarcoidosis/healthy)")
+
+ggsave("plots/volcano_monos_rna_CEBPB.pdf", height = 7, width = 9)
+```
+
+### ATAC Volcano plot of CEBPB regulon
+```{r}
+eregulons_gsea <- eRegulons |> 
+  subset(rho_R2G > 0.5) |> 
+  dplyr::select(Region, eRegulon_name) |> 
+  split(~eRegulon_name) |> 
+  sapply(function(set){
+  set$Region
+})
+
+pse_hm_eregulons <- lapply(pops, function(pop){
+gse_df <- all_fc_atac |> 
+  subset(celltype == pop) |> 
+  subset(baseMean > 10) |>
+  mutate(peak = str_replace(peak, "-", ":")) |> 
+  arrange(-stat)
+
+ranked_genes <- gse_df$stat
+names(ranked_genes) <- gse_df$peak
+
+gse_hm <- fgsea(pathways = c(eregulons_gsea), stats = ranked_genes, eps = 0) |> 
+  as.data.frame() |> 
+  mutate(celltype = pop)
+
+return(gse_hm)
+}) |> bind_rows()
+
+write_csv(x = pse_hm_eregulons, file = "ATAC/pse_hm_eregulons.csv")
+
+pse_hm_eregulons |>
+  subset(celltype == "CD14_Mono") |> 
+  subset(!is.na(padj)) |> 
+  subset(str_detect(pathway, "_direct_\\+\\/\\+")) |> 
+  mutate(nlog10p = -log10(padj),
+         signif = case_when(padj < 0.05 & NES > 0 ~ "sarcoidosis",
+                            padj < 0.05 & NES < 0 ~ "healthy",
+                            TRUE ~ "non_signif"),
+         pathway = str_remove(pathway, "_direct_\\+\\/\\+")) -> tmp
+
+tmp |> 
+  ggplot(aes(x = NES, y = nlog10p)) +
+geom_hline(yintercept = -log10(0.05), color = "grey70") +
+  geom_vline(xintercept = c(0), color = "grey70") +
+  geom_point(aes(color = signif), size = 2) +
+  geom_text_repel(aes(label = ifelse(padj < 1e-20, pathway, "")),
+                  direction = "y",
+                  nudge_x = 3.5 - tmp$NES,
+                  nudge_y = 0.5,
+                  segment.size = 0.2,
+                  max.overlaps = Inf,
+                  hjust = 0,
+                  vjust = 0, size = 2.75) +
+  theme_bw() +
+  theme(legend.position = "none") +
+  scale_color_manual(values = c("healthy" = "grey70",
+                               "sarcoidosis" = "#1d4c6e",
+                               "non_signif" = "grey95")) +
+  scale_y_continuous(expand = expansion(mult = c(0, 0.1))) +
+  scale_x_continuous(limits = c(-4.2, 4.2)) +
+  force_panelsizes(rows = unit(4, "in"),
+                   cols = unit(4, "in")) +
+  ylab("-log10(p.adj)")
+
+ggsave("plots/peak_set_enrichment_regulons_monos.pdf", height = 6, width = 7)
+
+eregulons_gsea
+
+cebpb <- eregulons_gsea$`CEBPB_direct_+/+`
+
+
+all_fc_atac |>
+  subset(celltype == "CD14_Mono") |> 
+  subset(!is.na(padj)) |> 
+  mutate(peak = str_replace(peak, "-", ":"),
+         nlog10p = -log10(padj),
+         signif = case_when(padj < 0.05 & log2FoldChange > 0 ~ "sarcoidosis",
+                            padj < 0.05 & log2FoldChange < 0 ~ "healthy",
+                            TRUE ~ "non_signif"),
+         in_cebpb = peak%in%cebpb) |> 
+  arrange(in_cebpb) -> tmp
+
+tmp |> 
+  ggplot(aes(x = log2FoldChange, y = nlog10p)) +
+  geom_point(aes(color = in_cebpb), size = 3) +
+  scale_color_manual(values = c("FALSE" = "grey70",
+                               "TRUE" = "steelblue")) +
+  # geom_vline(xintercept = c(-0.5, 0.5), color = "grey50") +
+  geom_hline(yintercept = -log10(0.05), color = "grey50") +
+  geom_text_repel(aes(label = ifelse(in_cebpb %in% c("TRUE", "CEBPB") & log2FoldChange > 0 & padj < 0.1, gene_name, "")),
+                  max.overlaps = Inf,
+                  direction = "y",
+                  nudge_x = 3 - tmp$log2FoldChange,
+                  nudge_y = 0,
+                  segment.size = 0.2,
+                  vjust = 0,
+                  hjust = 0,
+                  size = 3) +
+  #ggtitle(pop) +
+  scale_x_continuous(limits = c(-4.5, 4.5)) +
+  scale_y_continuous(expand = expansion(mult = c(0.01, 0.05))) +
+  ylab("-log10(p.adj)") +
+  xlab("log2fc sarcoidosis vs healthy") +
+  theme_bw() +
+  theme(legend.position = "none",
+        axis.text = element_text(size = 15),
+        axis.title = element_text(size = 15)) +
+  force_panelsizes(rows = unit(4, "in"),
+                   cols = unit(4, "in")) +
+  xlab("log2FC(sarcoidosis/healthy)")
+
+ggsave("plots/volcano_monos_atac_CEBPB_DORC.pdf", height = 7, width = 9)
+```
+
+
+### Quantify DE genes and peaks
+
+```{r}
+order_rna <- all_fc_rna |> 
+  subset(padj < 0.05) |> 
+  group_by(celltype) |> 
+  count() |> 
+  arrange(-n) |> 
+  pull(celltype) |>
+  unique()
+
+all_fc_rna |> 
+  subset(padj < 0.05) |> 
+  group_by(direction, celltype) |> 
+  count() |> 
+  ungroup() |> 
+  mutate(celltype = factor(celltype, levels = order_rna |> rev()),
+         direction = factor(direction, levels = c("up", "down"))) |> 
+  ggplot(aes(y = celltype, x = n, fill = direction)) +
+  geom_bar(stat = "summary", color = "black", linewidth = 0.3) +
+  scale_fill_manual(values = c("down" = "#6fa8dc",
+                               "up" = "#e06666")) +
+  theme_bw() +
+  theme(axis.title.y = element_blank(),
+        legend.position = "none",
+        axis.text = element_text(color = "black")) +
+  scale_x_continuous(expand = expansion(mult = c(0, 0.1))) +
+  ggtitle("RNA (DEG)") +
+  xlab("") +
+  force_panelsizes(cols = unit(1.5, "in"),
+                   rows = unit(2.7, "in")) -> p1
+  
+order_atac <- all_fc_atac |>
+  subset(padj < 0.05) |>
+  count(celltype) |>
+  arrange(-n) |>
+  pull(celltype) |>
+  unique()
+
+pops <- all_fc_rna$celltype |> unique()
+# 
+zero_de <- pops[!(pops %in% order_atac)]
+# 
+order_atac <- c(order_atac, zero_de)
+append <- data_frame(celltype = zero_de,
+                     direction = "up",
+                     n = 0)
+
+all_fc_atac |>
+  subset(padj < 0.05) |> 
+  mutate(direction = case_when(log2FoldChange > 0 ~ "up",
+                               log2FoldChange < 0 ~ "down")) |> 
+  group_by(direction, celltype) |> 
+  count() |> 
+  ungroup() |> 
+  mutate(direction = factor(direction, levels = c("up", "down"))) |> 
+  rbind(append) |> 
+  mutate(celltype = factor(celltype, levels = order_rna |> rev())) |> 
+  ggplot(aes(y = celltype, x = n, fill = direction)) +
+  geom_bar(stat = "summary", color = "black", linewidth = 0.3) +
+  scale_fill_manual(values = c("down" = "#6fa8dc",
+                               "up" = "#e06666")) +
+  theme_bw() +
+  theme(axis.ticks.y = element_blank(),
+        axis.title.y = element_blank(),
+        axis.text = element_text(color = "black"),
+        axis.text.y = element_blank()) +
+  scale_x_continuous(expand = expansion(mult = c(0, 0.1))) +
+  ggtitle("ATAC (DAR)") +
+  xlab("") +
+  force_panelsizes(cols = unit(1.5, "in"),
+                   rows = unit(2.7, "in")) -> p2
+
+ggarrange(p1, p2, align = "h")
+
+# ggsave("plots/DE_peaks_and_genes.pdf", height = 5, width = 5)
+```
+
+
+### Library sizes and cell numbers do not dictate DAR yield
+
+```{r}
+ls <- lapply(names(pseudobulk_atac), function(pop){
+  dds <- pseudobulk_atac[[pop]]
+  libsize <- dds$libsize
+  state <- dds$state
+  donor <- colnames(dds)
+  return(data.frame(celltype = pop,
+                    libsize = libsize,
+                    state = state,
+                    donor = donor))
+}) |> bind_rows()
+
+ls |>
+  subset(celltype != "excl") |> 
+  arrange(-libsize) %>%
+  mutate(celltype = factor(celltype, levels = .$celltype |> unique())) |> 
+  ggplot(aes(x = celltype, y = libsize)) +
+  geom_bar(stat = "summary", color = "black", fill = "grey95") +
+  geom_errorbar(stat = "summary", color = "black", width = 0.2) +
+  geom_quasirandom(width = 0.15, aes(color = state)) +
+  scale_color_manual(values = c("healthy" = "grey70",
+                               "sarcoidosis" = "#1d4c6e")) +
+  theme_bw() +
+  theme(axis.title.y = element_blank()) +
+  scale_y_continuous(expand = expansion(mult = c(0, 0.05))) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1)) +
+  ggtitle("ATAC fragments per celltype") +
+  xlab("") +
+  force_panelsizes(cols = unit(3.5, "in"),
+                   rows = unit(2, "in"))
+
+#ggsave("plots/captured_fragments_per_celltype.pdf", width = 7, height = 4)
+
+ls <- lapply(names(pseudobulk_rna), function(pop){
+  dds <- pseudobulk_rna[[pop]]
+  libsize <- dds$libsize
+  state <- dds$state
+  donor <- colnames(dds)
+  return(data.frame(celltype = pop,
+                    libsize = libsize,
+                    state = state,
+                    donor = donor))
+}) |> bind_rows()
+
+ls |>
+  subset(celltype != "excl") |> 
+  arrange(-libsize) %>%
+  mutate(celltype = factor(celltype, levels = .$celltype |> unique())) |> 
+  ggplot(aes(x = celltype, y = libsize)) +
+  geom_bar(stat = "summary", color = "black", fill = "grey95") +
+  geom_errorbar(stat = "summary", color = "black", width = 0.2) +
+  geom_quasirandom(width = 0.15, aes(color = state)) +
+  scale_color_manual(values = c("healthy" = "grey70",
+                               "sarcoidosis" = "#1d4c6e")) +
+  theme_bw() +
+  theme(axis.title.y = element_blank()) +
+  scale_y_continuous(expand = expansion(mult = c(0, 0.05))) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1)) +
+  ggtitle("RNA total counts per celltype") +
+  xlab("") +
+  force_panelsizes(cols = unit(3.5, "in"),
+                   rows = unit(2, "in"))
+
+#ggsave("plots/captured_transcripts_per_celltype.pdf", width = 7, height = 4)
+```
+
+### Plot RNA pathways and Regulons
+```{r}
+gse_hm <- read.csv("RNA/gsea_allpws.csv")
+IDs <- gse_hm |> 
+  mutate(direction = case_when(NES > 0 ~ "up",
+                               NES < 0 ~ "down")) |> 
+  subset(!str_detect(pathway, "GOBP")) |> 
+  subset(padj < 0.01) |> 
+  subset(celltype %in% c("CD14_Mono", "CD4_memory", "CD4_naive", "CD8_memory", "NK")) |> 
+  group_by(celltype, direction) |> 
+  slice_min(padj, n = 3) |> 
+  pull(pathway) |> 
+  unique()
+
+NES <- gse_hm |> 
+  subset(celltype %in% c("CD14_Mono", "CD4_memory", "CD4_naive", "CD8_memory", "NK")) |> 
+  subset(pathway %in% IDs) |>
+  mutate(NES = sign(NES) * -log10(padj),
+         NES = case_when(padj > 0.05 ~ 0,
+                         TRUE ~ NES),
+         pathway = str_replace_all(pathway, "_", " ")) |> 
+  select(NES, pathway, celltype) |> 
+  spread(key = celltype, value = NES) |> 
+  column_to_rownames("pathway")
+
+clust <- dist(x = NES) |> hclust()
+clust$labels[clust$order]
+
+gse_hm |> 
+  subset(pathway %in% IDs) |> 
+  subset(celltype %in% c("CD14_Mono", "NK", "CD8_memory", "CD4_naive", "CD4_memory")) |> 
+  mutate(pathway = str_replace_all(pathway, "_", " "),
+         pathway = factor(pathway, levels = clust$labels[clust$order] |> rev())) |> 
+  mutate(nlog10p = case_when(padj < 0.05 ~ -log10(padj),
+                             TRUE ~ 0)) |> 
+  ggplot(aes(x = celltype, y = pathway, size = nlog10p, fill = NES)) +
+  geom_point(shape = 21) +
+  scale_fill_gradient2(midpoint = 0, low = "#6fa8dc", mid = "grey90", high = "#e06666") +
+  scale_radius(range = c(-0.4, 8)) +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1, color = "black"),
+        axis.title.x = element_blank(),
+        axis.title.y = element_blank()) +
+  facet_wrap(~"RNA (GSEA)") +
+  force_panelsizes(cols = unit(1.5, "in"),
+                   rows = unit(3, "in"))
+
+hm_colors <- rev(RColorBrewer::brewer.pal(n = 11, name = "RdBu"))
+hm_colors.use <- grDevices::colorRampPalette(colors = hm_colors) (100)
+
+my_breaks <- c(seq(-40, 0, length.out = ceiling(100 / 2) + 1),
+               seq(0.05, 40, length.out = floor(100/2)))
+
+pheatmap::pheatmap(NES,
+                   #scale = "row",
+                   #annotation_col = hm_anno, annotation_names_col = T,
+                   color = hm_colors.use, number_color = "black",
+                   show_rownames = T, border_color = NA,
+                   breaks = my_breaks,
+                   treeheight_col = 10, cluster_rows = T, cluster_cols = T,
+                   treeheight_row = 10,
+                   cellheight = 15,
+                   cellwidth = 15, filename = "plots/hm_pws_rna.pdf")
+dev.off()
+```
+
+### Pseudobulk 6: ORA all pathways
+
+```{r}
+pops <- c("CD14_Mono", "CD4_memory", "CD4_naive", "CD8_memory", "NK")
+
+
+hallmarks <- msigdbr(collection = "H")
+go <- msigdbr(collection = "C5", subcollection = "GO:BP")
+kegg <- msigdbr(collection = "C2", subcollection = "CP:KEGG_LEGACY")
+reactome <- msigdbr(collection = "C2", subcollection = "CP:REACTOME")
+
+allpws <- rbind(hallmarks, go)
+
+ora_hm <- lapply(pops, function(pop){
+res <- all_fc_atac |> 
+  subset(celltype == pop) |> 
+  subset(!is.na(padj))
+
+universe <- res$gene_name
+
+ora_up <- enricher(res |> subset(padj < 0.05 & log2FoldChange > 0) |> pull(gene_name), 
+         universe = universe, 
+         TERM2GENE = allpws |> select(gs_id, gene_symbol),
+         TERM2NAME = allpws |> select(gs_id, gs_name), 
+         pAdjustMethod = "BH", 
+         qvalueCutoff = 0.05)
+
+ora_down <- enricher(res |> subset(padj < 0.05 & log2FoldChange < 0) |> pull(gene_name), 
+         universe = universe, 
+         TERM2GENE = allpws |> select(gs_id, gene_symbol),
+         TERM2NAME = allpws |> select(gs_id, gs_name), 
+         pAdjustMethod = "BH", 
+         qvalueCutoff = 0.05)
+
+ora_up <- ora_up@result |> 
+  mutate(direction = "up")
+
+ora_down <- ora_down@result |> 
+  mutate(direction = "down")
+
+ora_hm <- rbind(ora_up, ora_down) |> mutate(celltype = pop)
+
+return(ora_hm)
+}) |> bind_rows()
+
+#write.csv("ATAC/ora_all.csv")
+#ora_hm <- read.csv("ATAC/ora_all.csv")
+```
+
+### Pathway dotplot
+```{r}
+gse_hm <- read.csv("RNA/gsea_allpws.csv")
+IDs <- gse_hm |> 
+  mutate(direction = case_when(NES > 0 ~ "up",
+                               NES < 0 ~ "down")) |> 
+  subset(!str_detect(pathway, "GOBP")) |> 
+  subset(str_detect(pathway, "HALLMARK")) |> 
+  subset(padj < 0.01) |> 
+  subset(celltype %in% c("CD14_Mono", "CD4_memory", "CD4_naive", "CD8_memory", "NK")) |> 
+  #group_by(celltype, direction) |> 
+  slice_min(padj, n = 12) |> 
+  pull(pathway) |> 
+  unique()
+
+NES <- gse_hm |> 
+  subset(celltype %in% c("CD14_Mono", "CD4_memory", "CD4_naive", "CD8_memory", "NK")) |> 
+  subset(pathway %in% IDs) |>
+  mutate(NES = sign(NES) * -log10(padj),
+         NES = case_when(padj > 0.05 ~ 0,
+                         TRUE ~ NES),
+         pathway = str_replace_all(pathway, "_", " ")) |> 
+  select(NES, pathway, celltype) |> 
+  spread(key = celltype, value = NES) |> 
+  column_to_rownames("pathway")
+
+clust <- dist(x = NES) |> hclust()
+clust$labels[clust$order]
+
+ora_hm <- read.csv("ATAC/ora_all.csv")
+
+IDs_atac <- ora_hm |> 
+  subset(p.adjust < 0.05) |> 
+  slice_min(p.adjust, n = 8) |> 
+  subset(str_detect(Description, "HALLMARK")) |> 
+  pull(Description) |> unique()
+
+rownames(ora_hm) <- NULL
+
+ora_plt <- ora_hm |> 
+  subset(p.adjust < 0.05) |>  
+  subset(Description %in% IDs_atac) |>
+  subset(celltype %in% c("CD14_Mono", "NK", "CD8_memory", "CD4_memory", "CD4_naive")) |>
+  subset(str_detect(Description, "HALLMARK")) |>
+  mutate(Description = str_replace_all(Description, "_", " "),
+         direction = case_when(direction == "up" ~ 1,
+                               direction == "down" ~ -1),
+         NES = case_when(p.adjust < 0.05 ~ direction * -log10(p.adjust),
+                         TRUE ~ 0)) |>
+  dplyr::select(NES, Description, celltype) |>
+  spread(key = celltype, value = NES) |> 
+  column_to_rownames("Description") %>%
+  replace(is.na(.), 0) |> 
+  mutate(CD14_Mono = 0) |> 
+  select(CD14_Mono, CD8_memory, CD4_memory, CD4_naive) |> 
+  mutate(NK = 0)
+
+clust_atac <- dist(ora_plt) |> hclust()
+
+gse_hm |> 
+  subset(pathway %in% IDs) |> 
+  subset(celltype %in% c("CD14_Mono", "NK", "CD8_memory", "CD4_naive", "CD4_memory")) |> 
+  mutate(pathway = str_replace_all(pathway, "_", " "),
+         pathway = factor(pathway, levels = clust$labels[clust$order] |> rev()),
+         pathway = str_remove(pathway, "HALLMARK "),
+         direction = case_when(sign(NES) < 0 ~ "down",
+                               sign(NES) > 0 ~ "up")) |> 
+  mutate(nlog10p = case_when(padj < 0.05 ~ -log10(padj),
+                             TRUE ~ 0)) |> 
+  ggplot(aes(x = celltype, y = pathway, size = nlog10p, fill = direction)) +
+  geom_point(shape = 21) +
+  scale_fill_manual(values = c("down" = "#6fa8dc",
+                               "up" = "#e06666")) +
+  #scale_fill_gradient2(midpoint = 0, low = "#6fa8dc", mid = "grey90", high = "#e06666", limits = c(-3, 3)) +
+  scale_radius(range = c(-0.4, 8), limits = c(0, 15)) +
+  theme_bw() +
+  theme(axis.title.x = element_blank(),
+        axis.title.y = element_blank(),
+        axis.text.x = element_blank(),
+        axis.ticks.x = element_blank(),
+        axis.text.y = element_text(color = "black"),
+        legend.position = "left") +
+  scale_y_discrete(position = "right") +
+  facet_wrap(~"RNA (GSEA)") +
+  force_panelsizes(cols = unit(1.5, "in"),
+                   rows = unit(3 * 5/11, "in")) -> p1
+
+ora_hm |> 
+  subset(Description %in% IDs_atac) |> 
+  subset(celltype %in% c("CD14_Mono", "NK", "CD8_memory", "CD4_naive", "CD4_memory")) |> 
+  mutate(pathway = str_replace_all(Description, "_", " "),
+         pathway = factor(pathway, levels = clust_atac$labels[clust_atac$order] |> rev()),
+         pathway = str_remove(pathway, "HALLMARK "),
+         log2FC = case_when(direction == "up" ~ -log10(p.adjust),
+                            direction == "down" ~ log10(p.adjust)),
+         nlog10p = case_when(p.adjust < 0.05 ~ -log10(p.adjust),
+                             TRUE ~ 0)) |> 
+  ggplot(aes(x = celltype, y = pathway, size = nlog10p, fill = direction)) +
+  geom_point(shape = 21) +
+  scale_fill_manual(values = c("down" = "#6fa8dc",
+                               "up" = "#e06666")) +
+  #scale_fill_gradient2(midpoint = 0, low = "#6fa8dc", mid = "grey90", high = "#e06666") +
+  scale_radius(range = c(-0.4, 8), limits = c(0, 15)) +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1, color = "black"),
+        axis.title.x = element_blank(),
+        axis.title.y = element_blank(),
+        axis.text.y = element_text(color = "black"),
+        legend.position = "left") +
+  scale_y_discrete(position = "right") +
+  facet_wrap(~"ATAC (ORA)") +
+  force_panelsizes(cols = unit(1.5, "in"),
+                   rows = unit(3 * 3/11, "in")) -> p2
+
+ggarrange(p1, p2, align = "v", ncol = 1)
+#ggsave("plots/pathways_dotplot_small.pdf", width = 10, height = 6.5)
+```
+
+
+## CD14 Monocytes Heatmap (RNA)
+```{r}
+all_fc_rna |> 
+  subset(padj < 0.05) |> 
+  subset(celltype == "CD14_Mono") |> 
+  pull(gene) -> deg
+
+pseudobulk_rna$CD14_Mono |> 
+  counts(normalized = T) |> 
+  as.data.frame() |> 
+  rownames_to_column("gene") |> 
+  subset(gene %in% deg) -> tmp
+
+rownames(tmp) <- NULL
+
+tmp |> 
+  column_to_rownames("gene") |> 
+  t() |> 
+  scale() |> 
+  t() -> tmp
+
+
+library(e1071)
+set.seed(123)
+
+cm <- e1071::cmeans(tmp, 2)
+
+cm$cluster |> 
+  as.data.frame() |> 
+  rownames_to_column("gene") |> 
+  rename(cluster = `cm$cluster`) -> cm_cluster
+
+tmp |> 
+  as.data.frame() |> 
+  rownames_to_column("gene") |>
+  subset(gene %in% cm_cluster$gene) |> 
+  left_join(cm_cluster) |> 
+  mutate(cluster = factor(cluster, levels = c("1", "2")) |>
+           dplyr::recode_factor("1" = "up in sarcoidosis",
+                                "2" = "down in sarcoidosis")) |> 
+  arrange(cluster) -> hm_tmp
+
+
+values <- readxl::read_xlsx("250804_Sarcoidosis_patient_metadata.xlsx") |> 
+  subset(SampleID %in% colnames(hm_tmp))
+
+hm_tmp |> 
+  column_to_rownames("gene") |> 
+  dplyr::select(cluster) -> row_anno
+
+hm_tmp |> 
+  column_to_rownames("gene") |> 
+  dplyr::select(-cluster) -> mat
+
+values_ppd <- values$Column3
+names(values_ppd) <- values$SampleID
+values_ppd <- values_ppd[colnames(mat)]
+
+values_state <- values$state
+names(values_state) <- values$SampleID
+values_state <- values_state[colnames(mat)]
+
+library(circlize)
+library(ComplexHeatmap)
+top_anno <- HeatmapAnnotation(`PPD [%]` = anno_barplot(values_ppd,
+                                                 border = F,
+                                                 gp = gpar(fill = "#1d4c6e")),
+                              state = values_state,
+                              annotation_name_side = "left",
+                              gap = unit(1.5, "mm"), 
+                              col = list(state = c("healthy" = "grey70",
+                                                 "sarcoidosis" = "#1d4c6e")))
+
+colors <- rev(RColorBrewer::brewer.pal(n = 11, name = "RdBu"))
+colors.use <- grDevices::colorRampPalette(colors = colors)(101)
+
+my_breaks <- c(seq(-40, 0, length.out = ceiling(100 / 2) + 1),
+               seq(0.05, 40, length.out = floor(100 / 2)))
+
+hm_deg <- Heatmap(as.matrix(mat),
+              row_split = row_anno$cluster,
+              use_raster = F,
+              cluster_rows = F, top_annotation = top_anno,
+              cluster_columns = T,
+              show_row_names = F, show_column_names = T, show_column_dend = F,
+              border = T, col = colorRamp2(seq(-2, 2, length.out = 101), colors.use), width = unit(3.5, "in"),
+              height = unit(5, "in"), show_heatmap_legend = F, row_title_gp = gpar(fontsize = 8))
+
+#pdf("plots/hm_monocytes_deg.pdf")
+ComplexHeatmap::draw(hm_deg)
+#dev.off()
+```
+
+## CD14 Monocytes Heatmap (ATAC)
+```{r}
+all_fc_atac |> 
+  subset(padj < 0.05) |> 
+  subset(celltype == "CD14_Mono") |> 
+  pull(peak) -> dar
+
+pseudobulk_atac$CD14_Mono |> 
+  counts(normalized = T) |> 
+  as.data.frame() |> 
+  rownames_to_column("peak") |> 
+  subset(peak %in% dar) -> tmp
+
+rownames(tmp) <- NULL
+
+tmp |> 
+  column_to_rownames("peak") |> 
+  t() |> 
+  scale() |> 
+  t() -> tmp
+
+tmp |> 
+  as.data.frame() |> 
+  mutate(av_healthy = (`240702_healthy2` + `240702_healthy4` + `240715_healthy1` + `250715_healthy2` + `nijmegen_healthy1` + `nijmegen_healthy2`) / 6,
+         av_sarcoidosis = (HSJ_005 + HSJ_032 + HSJ_045 + HSJ_073 + HSJ_221 + HSJ_222 + HSJ_224 + HSJ_226 + HSJ_227 + HSJ_228 + HSJ_230 + HSJ_231) / 12) |> 
+  dplyr::select(av_healthy, av_sarcoidosis) -> clust
+
+
+library(e1071)
+set.seed(123)
+cm <- cmeans(clust, 2)
+
+cm$cluster |> 
+  as.data.frame() |> 
+  rownames_to_column("peak") |> 
+  rename(cluster = `cm$cluster`) -> cm_cluster
+
+tmp |> 
+  as.data.frame() |> 
+  rownames_to_column("peak") |>
+  subset(peak %in% cm_cluster$peak) |> 
+  left_join(cm_cluster) |> 
+  mutate(cluster = factor(cluster, levels = c("2", "1")) |>
+           dplyr::recode_factor("2" = "up in sarcoidosis",
+                                "1" = "down in sarcoidosis")) |> 
+  arrange(cluster) -> hm_tmp
+
+
+values <- readxl::read_xlsx("250804_Sarcoidosis_patient_metadata.xlsx") |> 
+  subset(SampleID %in% colnames(hm_tmp))
+
+hm_tmp |> 
+  column_to_rownames("peak") |> 
+  dplyr::select(cluster) -> row_anno
+
+hm_tmp |> 
+  column_to_rownames("peak") |> 
+  dplyr::select(-cluster) -> mat
+
+values_ppd <- values$Column3
+names(values_ppd) <- values$SampleID
+values_ppd <- values_ppd[colnames(mat)]
+
+values_state <- values$state
+names(values_state) <- values$SampleID
+values_state <- values_state[colnames(mat)]
+
+
+library(circlize)
+library(ComplexHeatmap)
+top_anno <- HeatmapAnnotation(`PPD [%]` = anno_barplot(values_ppd,
+                                                 border = F,
+                                                 gp = gpar(fill = "#1d4c6e")),
+                              state = values_state,
+                              annotation_name_side = "left",
+                              gap = unit(1.5, "mm"), 
+                              col = list(state = c("healthy" = "grey70",
+                                                 "sarcoidosis" = "#1d4c6e")))
+
+colors <- rev(RColorBrewer::brewer.pal(n = 11, name = "RdBu"))
+colors.use <- grDevices::colorRampPalette(colors = colors)(101)
+
+
+my_breaks <- c(seq(-40, 0, length.out = ceiling(100 / 2) + 1),
+               seq(0.05, 40, length.out = floor(100 / 2)))
+
+hm_deg <- Heatmap(as.matrix(mat),
+              row_split = row_anno$cluster,
+              use_raster = F,
+              cluster_rows = F, top_annotation = top_anno,
+              cluster_columns = T,
+              show_row_names = F, show_column_names = T, show_column_dend = F,
+              border = T, col = colorRamp2(seq(-2, 2, length.out = 101), colors.use), width = unit(3.5, "in"),
+              height = unit(5, "in"), show_heatmap_legend = F, row_title_gp = gpar(fontsize = 8))
+
+#pdf("plots/hm_monocytes_dar.pdf")
+ComplexHeatmap::draw(hm_deg)
+#dev.off()
+```
+
+### CEBPB expression/accessibility
+
+```{r}
+pval <- all_fc_rna |> 
+  subset(gene == "CEBPB" & celltype == "CD14_Mono") |> 
+  mutate(group1 = "healthy",
+         group2 = "sarcoidosis",
+         padj = sprintf("%.2e", padj))
+
+pseudobulk_rna$CD14_Mono |> 
+  counts(normalized = T) |> 
+  t() |> 
+  as.data.frame() |> 
+  select(`CEBPB`) |> 
+  rownames_to_column("SampleID") |> 
+  left_join(readxl::read_xlsx("250804_Sarcoidosis_patient_metadata.xlsx")) |>
+  ggplot(aes(x = state, y = CEBPB)) +
+  geom_boxplot(outliers = F, width = 0.7, aes(fill = state)) +
+  scale_y_continuous(expand = expansion(mult = c(0, 0.15)), limits = c(0, NA)) +
+  geom_quasirandom(width = 0.2, aes(color = as.character(`scRNA pool`))) + 
+  scale_fill_manual(values = c("healthy" = "grey70",
+                               "sarcoidosis" = "#1d4c6e")) +
+  facet_wrap(~ "CD14 monocyte\nCEBPB") +
+  stat_pvalue_manual(data = pval, label = "padj", y.position = 9000) +
+  force_panelsizes(rows = unit(1.5, "in"),
+                   cols = unit(1.7, "in")) +
+  theme_bw() +
+  theme(axis.title.x = element_blank(),
+        legend.position = "none") +
+  ylab("normalized counts") -> p1
+
+pval <- all_fc_atac |> 
+  subset(peak == "chr20-50283819-50284319" & celltype == "CD14_Mono") |> 
+  mutate(group1 = "healthy",
+         group2 = "sarcoidosis",
+         padj = sprintf("%.2e", padj))
+
+pseudobulk_atac$CD14_Mono |> 
+  counts(normalized = T) |> 
+  t() |> 
+  as.data.frame() |> 
+  select(`chr20-50283819-50284319`) |> 
+  rownames_to_column("SampleID") |> 
+  left_join(readxl::read_xlsx("250804_Sarcoidosis_patient_metadata.xlsx")) |>
+  ggplot(aes(x = state, y = `chr20-50283819-50284319`)) +
+  geom_boxplot(outliers = F, width = 0.7, aes(fill = state)) +
+  scale_y_continuous(expand = expansion(mult = c(0, 0.15)), limits = c(0, NA)) +
+  geom_quasirandom(width = 0.2, aes(color = as.character(`scATAC pool`))) + 
+  scale_fill_manual(values = c("healthy" = "grey70",
+                               "sarcoidosis" = "#1d4c6e")) +
+  facet_wrap(~ "CD14 monocyte\nchr20-50283819-50284319") +
+  stat_pvalue_manual(data = pval, label = "padj", y.position = 350) +
+  force_panelsizes(rows = unit(1.5, "in"),
+                   cols = unit(1.7, "in")) +
+  theme_bw() +
+  theme(axis.title.x = element_blank(),
+        legend.position = "none") +
+  ylab("normalized counts") -> p2
+
+ggarrange(p1, p2, align = "h", ncol = 2)
+
+#ggsave("plots/CEBPB_expression.pdf", height = 4, width = 6)
+```
+
+### PFKFB3 expression/accessibility
+
+```{r}
+pval <- all_fc_rna |> 
+  subset(gene == "PFKFB3" & celltype == "CD14_Mono") |> 
+  mutate(group1 = "healthy",
+         group2 = "sarcoidosis",
+         padj = sprintf("%.2e", padj))
+
+pseudobulk_rna$CD14_Mono |> 
+  counts(normalized = T) |> 
+  t() |> 
+  as.data.frame() |> 
+  select(`PFKFB3`) |> 
+  rownames_to_column("SampleID") |> 
+  left_join(readxl::read_xlsx("250804_Sarcoidosis_patient_metadata.xlsx")) |>
+  ggplot(aes(x = state, y = PFKFB3)) +
+  geom_boxplot(outliers = F, width = 0.7, aes(fill = state)) +
+  scale_y_continuous(expand = expansion(mult = c(0, 0.15)), limits = c(0, NA)) +
+  geom_quasirandom(width = 0.2, aes(color = as.character(`scRNA pool`))) + 
+  scale_fill_manual(values = c("healthy" = "grey70",
+                               "sarcoidosis" = "#1d4c6e")) +
+  facet_wrap(~ "CD14 monocyte\nPFKFB3") +
+  stat_pvalue_manual(data = pval, label = "padj", y.position = 4800) +
+  force_panelsizes(rows = unit(1.5, "in"),
+                   cols = unit(1.7, "in")) +
+  theme_bw() +
+  theme(axis.title.x = element_blank(),
+        legend.position = "none") +
+  ylab("normalized counts") -> p1
+
+pval <- all_fc_rna |> 
+  subset(gene == "HK2" & celltype == "CD14_Mono") |> 
+  mutate(group1 = "healthy",
+         group2 = "sarcoidosis",
+         padj = sprintf("%.2e", padj))
+
+pseudobulk_rna$CD14_Mono |> 
+  counts(normalized = T) |> 
+  t() |> 
+  as.data.frame() |> 
+  select(`HK2`) |> 
+  rownames_to_column("SampleID") |> 
+  left_join(readxl::read_xlsx("250804_Sarcoidosis_patient_metadata.xlsx")) |>
+  ggplot(aes(x = state, y = HK2)) +
+  geom_boxplot(outliers = F, width = 0.7, aes(fill = state)) +
+  scale_y_continuous(expand = expansion(mult = c(0, 0.15)), limits = c(0, NA)) +
+  geom_quasirandom(width = 0.2, aes(color = as.character(`scRNA pool`))) + 
+  scale_fill_manual(values = c("healthy" = "grey70",
+                               "sarcoidosis" = "#1d4c6e")) +
+  facet_wrap(~ "HK2") +
+  stat_pvalue_manual(data = pval, label = "padj", y.position = 800) +
+  force_panelsizes(rows = unit(1.5, "in"),
+                   cols = unit(1.7, "in")) +
+  theme_bw() +
+  theme(axis.title.x = element_blank(),
+        legend.position = "none") +
+  ylab("Counts") -> HK2_plot
+
+pval <- all_fc_atac |> 
+  subset(peak == "chr10-6236137-6236637" & celltype == "CD14_Mono") |> 
+  mutate(group1 = "healthy",
+         group2 = "sarcoidosis",
+         padj = sprintf("%.2e", padj))
+
+pseudobulk_atac$CD14_Mono |> 
+  counts(normalized = T) |> 
+  t() |> 
+  as.data.frame() |> 
+  select(`chr10-6236137-6236637`) |> 
+  rownames_to_column("SampleID") |> 
+  left_join(readxl::read_xlsx("250804_Sarcoidosis_patient_metadata.xlsx")) |>
+  ggplot(aes(x = state, y = `chr10-6236137-6236637`)) +
+  geom_boxplot(outliers = F, width = 0.7, aes(fill = state)) +
+  scale_y_continuous(expand = expansion(mult = c(0, 0.15)), limits = c(0, NA)) +
+  geom_quasirandom(width = 0.2, aes(color = as.character(`scATAC pool`))) + 
+  scale_fill_manual(values = c("healthy" = "grey70",
+                               "sarcoidosis" = "#1d4c6e")) +
+  facet_wrap(~ "CD14 monocyte\nchr10-50283819-50284319") +
+  stat_pvalue_manual(data = pval, label = "padj", y.position = 40) +
+  force_panelsizes(rows = unit(1.5, "in"),
+                   cols = unit(1.7, "in")) +
+  theme_bw() +
+  theme(axis.title.x = element_blank(),
+        legend.position = "none") +
+  ylab("normalized counts") -> p2
+
+
+
+ggarrange(p1, p2, align = "h", ncol = 2)
+
+
+ggsave("plots/PFKFB3_expression.pdf", height = 4, width = 6)
+```
+
+### APOBEC3A expression/accessibility
+
+```{r}
+pval <- all_fc_rna |> 
+  subset(gene == "APOBEC3A" & celltype == "CD14_Mono") |> 
+  mutate(group1 = "healthy",
+         group2 = "sarcoidosis",
+         padj = sprintf("%.2e", padj))
+
+pseudobulk_rna$CD14_Mono |> 
+  counts(normalized = T) |> 
+  t() |> 
+  as.data.frame() |> 
+  select(`APOBEC3A`) |> 
+  rownames_to_column("SampleID") |> 
+  left_join(readxl::read_xlsx("250804_Sarcoidosis_patient_metadata.xlsx")) |>
+  ggplot(aes(x = state, y = APOBEC3A)) +
+  geom_boxplot(outliers = F, width = 0.7, aes(fill = state)) +
+  scale_y_continuous(expand = expansion(mult = c(0, 0.15)), limits = c(0, NA)) +
+  geom_quasirandom(width = 0.2, aes(color = as.character(`scRNA pool`))) + 
+  scale_fill_manual(values = c("healthy" = "grey70",
+                               "sarcoidosis" = "#1d4c6e")) +
+  facet_wrap(~ "CD14 monocyte\nAPOBEC3A") +
+  stat_pvalue_manual(data = pval, label = "padj", y.position = 10000) +
+  force_panelsizes(rows = unit(1.5, "in"),
+                   cols = unit(1.7, "in")) +
+  theme_bw() +
+  theme(axis.title.x = element_blank(),
+        legend.position = "none") +
+  ylab("normalized counts") -> p1
+
+pval <- all_fc_atac |> 
+  subset(peak == "chr22-38966179-38966679" & celltype == "CD14_Mono") |> 
+  mutate(group1 = "healthy",
+         group2 = "sarcoidosis",
+         padj = sprintf("%.2e", padj))
+
+pseudobulk_atac$CD14_Mono |> 
+  counts(normalized = T) |> 
+  t() |> 
+  as.data.frame() |> 
+  select(`chr22-38966179-38966679`) |> 
+  rownames_to_column("SampleID") |> 
+  left_join(readxl::read_xlsx("250804_Sarcoidosis_patient_metadata.xlsx")) |>
+  ggplot(aes(x = state, y = `chr22-38966179-38966679`)) +
+  geom_boxplot(outliers = F, width = 0.7, aes(fill = state)) +
+  scale_y_continuous(expand = expansion(mult = c(0, 0.15)), limits = c(0, NA)) +
+  geom_quasirandom(width = 0.2, aes(color = as.character(`scATAC pool`))) + 
+  scale_fill_manual(values = c("healthy" = "grey70",
+                               "sarcoidosis" = "#1d4c6e")) +
+  facet_wrap(~ "CD14 monocyte\nchr22-38966179-38966679") +
+  stat_pvalue_manual(data = pval, label = "padj", y.position = 100) +
+  force_panelsizes(rows = unit(1.5, "in"),
+                   cols = unit(1.7, "in")) +
+  theme_bw() +
+  theme(axis.title.x = element_blank(),
+        legend.position = "none") +
+  ylab("normalized counts") -> p2
+
+ggarrange(p1, p2, align = "v", ncol = 2)
+
+ggsave("plots/APOBEC3A_expression.pdf", height = 4, width = 6)
+```
+
+### JAK1 expression/accessibility
+
+```{r}
+pval <- all_fc_rna |> 
+  subset(gene == "JAK1" & celltype == "CD14_Mono") |> 
+  mutate(group1 = "healthy",
+         group2 = "sarcoidosis",
+         padj = sprintf("%.2e", padj))
+
+pseudobulk_rna$CD14_Mono |> 
+  counts(normalized = T) |> 
+  t() |> 
+  as.data.frame() |> 
+  select(`JAK1`) |> 
+  rownames_to_column("SampleID") |> 
+  left_join(readxl::read_xlsx("250804_Sarcoidosis_patient_metadata.xlsx")) |>
+  ggplot(aes(x = state, y = JAK1)) +
+  geom_boxplot(outliers = F, width = 0.7, aes(fill = state)) +
+  scale_y_continuous(expand = expansion(mult = c(0.15, 0.15)), limits = c(NA, NA)) +
+  geom_quasirandom(width = 0.2, aes(color = as.character(`scRNA pool`))) + 
+  scale_fill_manual(values = c("healthy" = "grey70",
+                               "sarcoidosis" = "#1d4c6e")) +
+  facet_wrap(~ "CD14 monocyte\nJAK1") +
+  stat_pvalue_manual(data = pval, label = "padj", y.position = 1100) +
+  force_panelsizes(rows = unit(1.5, "in"),
+                   cols = unit(1.7, "in")) +
+  theme_bw() +
+  theme(axis.title.x = element_blank(),
+        legend.position = "none") +
+  ylab("normalized counts") -> p1
+
+p1
+
+pval <- all_fc_atac |> 
+  subset(peak == "chr1-65066743-65067243" & celltype == "CD14_Mono") |> 
+  mutate(group1 = "healthy",
+         group2 = "sarcoidosis",
+         padj = round(padj, digits = 4))
+
+pseudobulk_atac$CD14_Mono |> 
+  counts(normalized = T) |> 
+  t() |> 
+  as.data.frame() |> 
+  select(`chr1-65066743-65067243`) |> 
+  rownames_to_column("SampleID") |> 
+  left_join(readxl::read_xlsx("250804_Sarcoidosis_patient_metadata.xlsx")) |>
+  ggplot(aes(x = state, y = `chr1-65066743-65067243`)) +
+  geom_boxplot(outliers = F, width = 0.7, aes(fill = state)) +
+  scale_y_continuous(expand = expansion(mult = c(0.15, 0.15)), limits = c(NA, NA)) +
+  geom_quasirandom(width = 0.2, aes(color = as.character(`scATAC pool`))) + 
+  scale_fill_manual(values = c("healthy" = "grey70",
+                               "sarcoidosis" = "#1d4c6e")) +
+  facet_wrap(~ "CD14 monocyte\nchr1-65066743-65067243") +
+  stat_pvalue_manual(data = pval, label = "padj", y.position = 250) +
+  force_panelsizes(rows = unit(1.5, "in"),
+                   cols = unit(1.7, "in")) +
+  theme_bw() +
+  theme(axis.title.x = element_blank(),
+        legend.position = "none") +
+  ylab("normalized counts") -> p2
+
+ggarrange(p1, p2, align = "h", ncol = 2)
+
+ggsave("plots/JAK1_expression.pdf", height = 4, width = 6)
+```
+
+### T cell NFKB accessibility 
+
+```{r}
+pval <- all_fc_atac |> 
+  subset(peak == "chr4-102501087-102501587" & celltype == "CD4_naive") |> 
+  mutate(group1 = "healthy",
+         group2 = "sarcoidosis",
+         padj = round(padj, digits = 4))
+
+pseudobulk_atac$CD4_naive |> 
+  counts(normalized = T) |> 
+  t() |> 
+  as.data.frame() |> 
+  select(`chr4-102501087-102501587`) |> 
+  rownames_to_column("SampleID") |> 
+  left_join(readxl::read_xlsx("250804_Sarcoidosis_patient_metadata.xlsx")) |>
+  ggplot(aes(x = state, y = `chr4-102501087-102501587`)) +
+  geom_boxplot(outliers = F, width = 0.7, aes(fill = state)) +
+  scale_y_continuous(expand = expansion(mult = c(0.15, 0.15)), limits = c(NA, NA)) +
+  geom_quasirandom(width = 0.2, aes(color = as.character(`scRNA pool`))) + 
+  scale_fill_manual(values = c("healthy" = "grey70",
+                               "sarcoidosis" = "#1d4c6e")) +
+  facet_wrap(~ "CD4 naive NFKB1 TSS\nchr4-102501087-102501587") +
+  stat_pvalue_manual(data = pval, label = "padj", y.position = 100) +
+  force_panelsizes(rows = unit(1.5, "in"),
+                   cols = unit(1.7, "in")) +
+  theme_bw() +
+  theme(axis.title.x = element_blank(),
+        legend.position = "none") +
+  ylab("normalized counts") -> p1
+
+pval <- all_fc_atac |> 
+  subset(peak == "chr6-44265414-44265914") |> 
+  subset(padj < 0.05) |> 
+  subset(celltype == "CD4_naive") |> 
+  mutate(group1 = "healthy",
+         group2 = "sarcoidosis",
+         padj = sprintf("%.2e", padj))
+
+pseudobulk_atac$CD4_naive |> 
+  counts(normalized = T) |> 
+  t() |> 
+  as.data.frame() |> 
+  select(`chr6-44265414-44265914`) |> 
+  rownames_to_column("SampleID") |> 
+  left_join(readxl::read_xlsx("250804_Sarcoidosis_patient_metadata.xlsx")) |>
+  ggplot(aes(x = state, y = `chr6-44265414-44265914`)) +
+  geom_boxplot(outliers = F, width = 0.7, aes(fill = state)) +
+  scale_y_continuous(expand = expansion(mult = c(0.15, 0.15)), limits = c(NA, NA)) +
+  geom_quasirandom(width = 0.2, aes(color = as.character(`scRNA pool`))) + 
+  scale_fill_manual(values = c("healthy" = "grey70",
+                               "sarcoidosis" = "#1d4c6e")) +
+  facet_wrap(~ "CD4 naive NFKBIE TSS\nchr4-102501087-102501587") +
+  stat_pvalue_manual(data = pval, label = "padj", y.position = 100) +
+  force_panelsizes(rows = unit(1.5, "in"),
+                   cols = unit(1.7, "in")) +
+  theme_bw() +
+  theme(axis.title.x = element_blank(),
+        legend.position = "none") +
+  ylab("normalized counts") -> p2
+
+
+ggarrange(p1, p2, align = "h", ncol = 2)
+
+ggsave("plots/NFKB1_TSS.pdf", height = 4, width = 6)
+```
+
+###STAT1/3 expression/accessibility
+```{r}
+pval <- all_fc_rna |> 
+  subset(gene == "STAT1" & celltype == "CD14_Mono") |> 
+  mutate(group1 = "healthy",
+         group2 = "sarcoidosis",
+         padj = sprintf("%.2e", padj))
+
+pseudobulk_rna$CD14_Mono |> 
+  counts(normalized = T) |> 
+  t() |> 
+  as.data.frame() |> 
+  select(`STAT1`) |> 
+  rownames_to_column("SampleID") |> 
+  left_join(readxl::read_xlsx("250804_Sarcoidosis_patient_metadata.xlsx")) |>
+  ggplot(aes(x = state, y = STAT1)) +
+  geom_boxplot(outliers = F, width = 0.7, aes(fill = state)) +
+  scale_y_continuous(expand = expansion(mult = c(0.15, 0.15)), limits = c(NA, NA)) +
+  geom_quasirandom(width = 0.2, aes(color = as.character(`scRNA pool`))) + 
+  scale_fill_manual(values = c("healthy" = "grey70",
+                               "sarcoidosis" = "#1d4c6e")) +
+  facet_wrap(~ "CD14 monocyte\nSTAT1") +
+  stat_pvalue_manual(data = pval, label = "padj", y.position = 6500) +
+  force_panelsizes(rows = unit(1.5, "in"),
+                   cols = unit(1.7, "in")) +
+  theme_bw() +
+  theme(axis.title.x = element_blank(),
+        legend.position = "none") +
+  ylab("normalized counts") -> p1
+
+pval <- all_fc_rna |> 
+  subset(gene == "STAT3" & celltype == "CD14_Mono") |> 
+  mutate(group1 = "healthy",
+         group2 = "sarcoidosis",
+         padj = sprintf("%.2e", padj))
+
+pseudobulk_rna$CD14_Mono |> 
+  counts(normalized = T) |> 
+  t() |> 
+  as.data.frame() |> 
+  select(`STAT3`) |> 
+  rownames_to_column("SampleID") |> 
+  left_join(readxl::read_xlsx("250804_Sarcoidosis_patient_metadata.xlsx")) |>
+  ggplot(aes(x = state, y = STAT3)) +
+  geom_boxplot(outliers = F, width = 0.7, aes(fill = state)) +
+  scale_y_continuous(expand = expansion(mult = c(0.15, 0.15)), limits = c(NA, NA)) +
+  geom_quasirandom(width = 0.2, aes(color = as.character(`scRNA pool`))) + 
+  scale_fill_manual(values = c("healthy" = "grey70",
+                               "sarcoidosis" = "#1d4c6e")) +
+  facet_wrap(~ "CD14 monocyte\nSTAT3") +
+  stat_pvalue_manual(data = pval, label = "padj", y.position = 1400) +
+  force_panelsizes(rows = unit(1.5, "in"),
+                   cols = unit(1.7, "in")) +
+  theme_bw() +
+  theme(axis.title.x = element_blank(),
+        legend.position = "none") +
+  ylab("normalized counts") -> p2
+
+ggarrange(p1, p2, align = "h", ncol = 2)
+```
+
+### RPTOR/AKT2 accessibility
+```{r}
+pval <- all_fc_rna |> 
+  subset(gene == "AKT2" & celltype == "CD4_memory") |> 
+  mutate(group1 = "healthy",
+         group2 = "sarcoidosis",
+         padj = round(padj, digits = 4))
+
+pseudobulk_rna$CD4_memory |> 
+  counts(normalized = T) |> 
+  t() |> 
+  as.data.frame() |> 
+  select(`AKT2`) |> 
+  rownames_to_column("SampleID") |> 
+  left_join(readxl::read_xlsx("250804_Sarcoidosis_patient_metadata.xlsx")) |>
+  ggplot(aes(x = state, y = AKT2)) +
+  geom_boxplot(outliers = F, width = 0.7, aes(fill = state)) +
+  scale_y_continuous(expand = expansion(mult = c(0, 0.1)), limits = c(0, NA)) +
+  geom_quasirandom(width = 0.2, aes(color = as.character(`scATAC pool`))) + 
+  scale_fill_manual(values = c("healthy" = "grey70",
+                               "sarcoidosis" = "#1d4c6e")) +
+  facet_wrap(~ "AKT2") +
+  stat_pvalue_manual(data = pval, label = "padj", y.position = 90) +
+  force_panelsizes(rows = unit(1.5, "in"),
+                   cols = unit(1.7, "in")) +
+  theme_bw() +
+  theme(axis.title.x = element_blank(),
+        legend.position = "none") +
+  ylab("Counts")
+
+pval <- all_fc_atac |> 
+  subset(peak == "chr19-40284311-40284811" & celltype == "CD4_memory") |> 
+  mutate(group1 = "healthy",
+         group2 = "sarcoidosis",
+         padj = round(padj, digits = 4))
+
+pseudobulk_atac$CD4_memory |> 
+  counts(normalized = T) |> 
+  t() |> 
+  as.data.frame() |>
+  select(`chr19-40284311-40284811`) |> 
+  rownames_to_column("SampleID") |> 
+  left_join(readxl::read_xlsx("250804_Sarcoidosis_patient_metadata.xlsx")) |>
+  ggplot(aes(x = state, y = `chr19-40284311-40284811`)) +
+  geom_boxplot(outliers = F, width = 0.7, aes(fill = state)) +
+  scale_y_continuous(expand = expansion(mult = c(0, 0.15)), limits = c(0, NA)) +
+  geom_quasirandom(width = 0.2, aes(color = as.character(`scATAC pool`))) + 
+  scale_fill_manual(values = c("healthy" = "grey70",
+                               "sarcoidosis" = "#1d4c6e")) +
+  facet_wrap(~ "CD4 memory AKT2\nchr19-40284311-40284811") +
+  stat_pvalue_manual(data = pval, label = "padj", y.position = 70) +
+  force_panelsizes(rows = unit(1.5, "in"),
+                   cols = unit(1.7, "in")) +
+  theme_bw() +
+  theme(axis.title.x = element_blank(),
+        legend.position = "none") +
+  ylab("Counts") -> p1
+
+pval <- all_fc_atac |> 
+  subset(peak == "chr19-40284311-40284811" & celltype == "CD4_naive") |> 
+  mutate(group1 = "healthy",
+         group2 = "sarcoidosis",
+         padj = round(padj, digits = 4))
+
+pseudobulk_atac$CD4_naive |> 
+  counts(normalized = T) |> 
+  t() |> 
+  as.data.frame() |> 
+  select(`chr19-40284311-40284811`) |> 
+  rownames_to_column("SampleID") |> 
+  left_join(readxl::read_xlsx("250804_Sarcoidosis_patient_metadata.xlsx")) |>
+  ggplot(aes(x = state, y = `chr19-40284311-40284811`)) +
+  geom_boxplot(outliers = F, width = 0.7, aes(fill = state)) +
+  scale_y_continuous(expand = expansion(mult = c(0, 0.15)), limits = c(0, NA)) +
+  geom_quasirandom(width = 0.2, aes(color = as.character(`scATAC pool`))) + 
+  scale_fill_manual(values = c("healthy" = "grey70",
+                               "sarcoidosis" = "#1d4c6e")) +
+  facet_wrap(~ "CD4 naive AKT2\nchr19-40284311-40284811") +
+  stat_pvalue_manual(data = pval, label = "padj", y.position = 60) +
+  force_panelsizes(rows = unit(1.5, "in"),
+                   cols = unit(1.7, "in")) +
+  theme_bw() +
+  theme(axis.title.x = element_blank(),
+        legend.position = "none") +
+  ylab("Counts") -> p2
+
+ggarrange(p1, p2, align = "v", ncol = 1)
+
+ggsave("plots/AKT2_accessibility.pdf", height = 7, width = 4)
+```
+
+### Pseudobulk: Consistent DARs/DEGs in ATAC and RNA
+```{r}
+all_fc_rna <- read.csv("RNA/all_fc.csv")
+
+res_rna <- all_fc_rna |> 
+  subset(celltype == "CD14_Mono") |> 
+  subset(padj < 0.05)
+
+res_atac <- all_fc_atac |> 
+  subset(celltype == "CD14_Mono") |> 
+  subset(padj < 0.05) |> 
+  group_by(gene_name) |> 
+  slice_min(padj)
+
+combined <- res_rna |> 
+  mutate(fc_rna = log2FoldChange,
+         p_rna = padj) |> 
+  dplyr::select(gene, fc_rna, p_rna) |> 
+  rename(gene_name = gene) |> 
+  left_join(res_atac) |> 
+  mutate(fc_atac = log2FoldChange,
+         p_atac = padj,
+         direction = case_when(sign(fc_atac) == 1 & sign(fc_rna) == 1 ~ "up_atac_up_rna",
+                               sign(fc_atac) == 1 & sign(fc_rna) == -1 ~ "up_atac_down_rna",
+                               sign(fc_atac) == -1 & sign(fc_rna) == -1 ~ "down_atac_down_rna",
+                               sign(fc_atac) == -1 & sign(fc_rna) == 1 ~ "down_atac_up_rna"))
+
+combined |> 
+  subset(!is.na(peak)) |>
+  mutate(p_rna = -log10(p_rna) * sign(fc_rna),
+         p_atac = -log10(p_atac) * sign(fc_atac)) |> 
+  ggplot(aes(x = p_atac, y = p_rna)) +
+  geom_hline(yintercept = 0, color = "grey50") +
+  geom_vline(xintercept = 0, color = "grey50") +
+  geom_point(aes(color = direction), size = 3) +
+  geom_text_repel(aes(label = gene_name), max.overlaps = 20, force = 10, size = 2.9) +
+  theme_bw() +
+  force_panelsizes(cols = unit(4, "in"),
+                   rows = unit(4, "in")) +
+  scale_x_continuous(limits = symmetric_limits) +
+  scale_y_continuous(limits = symmetric_limits) +
+  scale_color_manual(values = c("up_atac_up_rna" = "#1d4c6e",
+                                "down_atac_down_rna" = "grey70",
+                                "up_atac_down_rna" = "grey90",
+                                "down_atac_up_rna" = "grey90")) +
+  xlab("sign(FC) x -log10(p.adj) ATAC") +
+  ylab("sign(FC) x -log10(p.adj) RNA")
+
+ggsave("plots/consistent_DE_monos.pdf", height = 8, width = 12)
+```
+
+```{r}
+library(FigR)
+
+eRegulons <- read_tsv("ATAC/eRegulon_direct.tsv")
+
+eRegulons
+
+combined |> subset(direction == "up_atac_up_rna") |> pull(gene_name) -> mono_genes
+
+mono_genes
+
+DORC_df <- eRegulons |> 
+  select(Region, Gene, rho_R2G) |> 
+  subset(rho_R2G > 0.50) |> 
+  unique()
+
+DORC_df |> 
+  select(Gene, Region) |> 
+  unique() |> 
+  count(Gene) |> 
+  arrange(-n) %>%
+  mutate(rank = 1:nrow(.),
+         label = Gene %in% mono_genes & n > 10) -> tmp
+
+tmp |> 
+  ggplot(aes(x = rank, y = n)) +
+  geom_point(color = "steelblue") +
+  theme_bw() +
+  force_panelsizes(rows = unit(4, "in"),
+                   cols = unit(2.5, "in")) +
+  geom_hline(yintercept = 9.5) +
+  geom_text_repel(aes(label = ifelse(label, Gene, "")),
+                  max.overlaps = Inf,
+                  direction = "y",
+                  nudge_x = 1500 - tmp$rank,
+                  nudge_y = 0,
+                  segment.size = 0.4,
+                  vjust = 0,
+                  hjust = 0,
+                  size = 3) +
+  scale_x_continuous(limits = c(0, 5000)) +
+  ggtitle("DORCs") +
+  ylab("n linked peaks")
+
+
+ggsave("plots/dorcs.pdf")
+```
+
+#### Consistent Regulons in monocytes
+
+```{r}
+gse_hm_regulons <- read.csv("RNA/gse_hm_eregulons.csv")
+pse_hm_eregulons <- read.csv("ATAC/pse_hm_eregulons.csv")
+
+res_rna <- gse_hm_regulons |> 
+  subset(celltype == "CD14_Mono") |> 
+  subset(padj < 0.05) |> 
+  subset(str_detect(pathway, "_direct_\\+\\/\\+"))
+
+res_atac <- pse_hm_eregulons |> 
+  subset(celltype == "CD14_Mono") |> 
+  subset(padj < 0.05) |> 
+  subset(str_detect(pathway, "_direct_\\+\\/\\+"))
+
+combined <- res_rna |> 
+  mutate(fc_rna = NES,
+         p_rna = padj) |> 
+  dplyr::select(pathway, fc_rna, p_rna) |> 
+  left_join(res_atac) |> 
+  mutate(fc_atac = NES,
+         p_atac = padj,
+         direction = case_when(sign(fc_atac) == 1 & sign(fc_rna) == 1 ~ "up_atac_up_rna",
+                               sign(fc_atac) == 1 & sign(fc_rna) == -1 ~ "up_atac_down_rna",
+                               sign(fc_atac) == -1 & sign(fc_rna) == -1 ~ "down_atac_down_rna",
+                               sign(fc_atac) == -1 & sign(fc_rna) == 1 ~ "down_atac_up_rna"),
+         pathway = str_remove(pathway, "_direct_\\+\\/\\+"))
+
+combined |> 
+  subset(!is.na(p_atac)) |>
+  mutate(p_rna = -log10(p_rna) * sign(fc_rna),
+         p_atac = -log10(p_atac) * sign(fc_atac)) |> 
+  ggplot(aes(x = p_atac, y = p_rna)) +
+  geom_hline(yintercept = 0, color = "grey50") +
+  geom_vline(xintercept = 0, color = "grey50") +
+  geom_point(aes(color = direction), size = 3) +
+  geom_text_repel(aes(label = pathway), max.overlaps = 20, force = 10, size = 2.9) +
+  theme_bw() +
+  force_panelsizes(cols = unit(4, "in"),
+                   rows = unit(4, "in")) +
+  scale_x_continuous(limits = symmetric_limits) +
+  scale_y_continuous(limits = symmetric_limits) +
+  scale_color_manual(values = c("up_atac_up_rna" = "#1d4c6e",
+                                "down_atac_down_rna" = "grey70",
+                                "up_atac_down_rna" = "grey90",
+                                "down_atac_up_rna" = "grey90")) +
+  xlab("sign(FC) x -log10(p.adj) ATAC") +
+  ylab("sign(FC) x -log10(p.adj) RNA")
+
+ggsave("plots/consistent_DE_monos_regulons.pdf", height = 6, width = 10)
+```
+
+
+# Update fragment files
+```{r}
+frags <- list()
+
+sarc_atac[["ATAC"]]@fragments
+
+frags[[1]] <- UpdatePath(sarc_atac[["ATAC"]]@fragments[[1]], new.path = "ATAC/all_frags/pool_1/fragments.tsv.gz")
+frags[[2]] <- UpdatePath(sarc_atac[["ATAC"]]@fragments[[2]], new.path = "ATAC/all_frags/pool_2_1/fragments.tsv.gz")
+frags[[3]] <- UpdatePath(sarc_atac[["ATAC"]]@fragments[[3]], new.path = "ATAC/all_frags/pool_2_2/fragments.tsv.gz")
+frags[[4]] <- UpdatePath(sarc_atac[["ATAC"]]@fragments[[4]], new.path = "ATAC/all_frags/pool_3_1/fragments.tsv.gz")
+frags[[5]] <- UpdatePath(sarc_atac[["ATAC"]]@fragments[[5]], new.path = "ATAC/all_frags/pool_3_2/fragments.tsv.gz")
+
+Fragments(sarc_atac[["ATAC"]]) <- NULL
+Fragments(sarc_atac[["ATAC"]]) <- frags
+
+write_rds(sarc_atac, "ATAC/sarc_atac_pctopic.rds")
+```
+
+## HOMER denovo visualization
+
+### Up peaks
+```{r}
+for (pop in c("CD14_Mono", "CD8_Memory", "CD4_Memory", "NK", "CD4_naive")){
+homer_denovo <- read_delim(paste0("ATAC/HOMER/", pop, "_up_peaks/nonRedundant.motifs"), col_names = F) |> 
+  filter(str_detect(X1, ">"),
+         X4 < log(1e-12)) |> 
+  rowid_to_column("rowid") |> 
+  mutate(Motif = paste0("motif", rowid),
+         P = exp(X4),
+         Target = X6 |> str_extract("T:.*B") |> str_extract("[0-9]+\\.[0-9][0-9]\\%") |> str_remove("\\%") |> as.numeric(),
+         Background = X6 |> str_extract("B:.*P") |> str_extract("[0-9]+\\.[0-9][0-9]\\%") |> str_remove("\\%") |> as.numeric(),
+         Foldchange = Target/Background) |> 
+  select(Motif:Foldchange)
+
+motif_output <- tibble(Motif = "",
+                       Name = "",
+                       Score = 0,
+                       P = 0,
+                       Target = 0,
+                       Background = 0,
+                       Foldchange = 0) |> 
+  dplyr::slice(0)
+
+for(i in 1:nrow(homer_denovo)){
+  homer_denovo1 <- read_delim(paste0("ATAC/HOMER/", pop, "_up_peaks/homerResults/motif", i, ".info.html"), col_names = F) |> 
+    filter(str_detect(X1, "<H4>|Score:|Alignment:"))
+  
+  tmp <- homer_denovo1 |> 
+    mutate(Type = rep(c("Name", "Score", "Alignment"), nrow(homer_denovo1) / 3),
+           Info = str_remove_all(X1, "<H4>|</H4>|<TR>|</TR>|<TD>|</TD>|</TD|Score:"),
+           Motif = paste0("motif", i),
+           Info = case_when(Info == "Alignment:<FONT" ~ X2,
+                            TRUE ~ Info)) |> 
+    select(-X1, -X2) |> 
+    pivot_wider(names_from = Type, values_from = Info, values_fn = list) |> 
+    unnest(c(Name, Score, Alignment)) |> 
+    mutate(Score = as.numeric(Score),
+           Alignment1 = Alignment |> str_remove('face=\\"courier\\">') |> str_remove("</FONT>.*"),
+           Alignment2 = Alignment |> str_remove('.*FONT face="courier">') |> str_remove("</FONT></TD></TR></TABLE>")) |> 
+    select(-Alignment) |> 
+    left_join(homer_denovo)
+  
+  motif_output <- rbind(motif_output, tmp)
+}
+
+homer_up_denovo <- motif_output |> 
+  mutate(Name_Short = Name |> str_remove_all("/.*") |> str_remove_all("\\(.*"), .after = Name)
+
+
+plotlist <- lapply(homer_up_denovo$Motif |> unique(), function(motif){
+homer_up_denovo |> 
+  subset(Motif == motif) -> tmp
+
+raster_img <- magick::image_read_svg(paste0("ATAC/HOMER/", pop, "_up_peaks/homerResults/", motif, ".logo.svg"),
+                                     height = 2000,
+                                     width = 5000) |> 
+  as.raster() |> 
+  grid::rasterGrob(interpolate = F)
+
+list(
+ggplot() + theme_void(),
+ggplot() + theme_void(),
+ggplot() + 
+  annotation_custom(raster_img) + 
+  theme_void() +
+  force_panelsizes(rows = unit(2.5, "in"),
+                   cols = unit(2, "in")) +
+  theme(plot.margin = unit(c(0,0,0,0), "in")),
+
+tmp |> 
+  slice_max(Score, n = 1) |> 
+  pivot_longer(cols = Target:Background, names_to = "var", values_to = "pct") |> 
+  ggplot(aes(x = pct, y = var)) +
+  geom_bar(stat = "summary", color = "black", fill = "#6fa8dc", width = 0.8) +
+  theme_bw() +
+  scale_x_continuous(expand = expansion(mult = c(0, 0.1)), limits = c(0, 50)) +
+  #facet_wrap(~Motif, ncol = 1) +
+  force_panelsizes(cols = unit(2, "in"), rows = unit(0.7, "in")) +
+  theme(axis.title.x = element_blank(),
+        axis.title.y = element_blank(),
+        axis.text.y = element_blank(),
+        axis.ticks.y = element_blank(),
+        plot.margin = unit(c(0,0,0,0), "in")),
+  
+tmp |> 
+  slice_max(Score, n = 1) |> 
+  pivot_longer(cols = Target:Background, names_to = "var", values_to = "pct") |> 
+  ggplot(aes(x = -log10(P), y = "p")) +
+  geom_bar(stat = "summary", color = "black", fill = "#9fc5e8", width = 0.5) +
+  theme_bw() +
+  scale_x_continuous(expand = expansion(mult = c(0, 0.1)), limits = c(0, 40)) +
+  #facet_wrap(~Motif, ncol = 1) +
+  force_panelsizes(cols = unit(1, "in"), rows = unit(0.7, "in")) +
+  theme(axis.text.y = element_blank(),
+        axis.title.y = element_blank(),
+        axis.ticks.y = element_blank(),
+        axis.title.x = element_blank(),
+        plot.margin = unit(c(0,0,0,0), "in")),
+
+tmp |> 
+  slice_max(Score, n = 5, with_ties = F) %>% 
+  mutate(Name_Short = factor(Name_Short, levels = rev(.$Name_Short))) |> 
+  ggplot(aes(x = Score, y = Name_Short)) +
+  geom_bar(stat = "summary", color = "black", fill = "#76a5af", width = 0.8) +
+  theme_bw() +
+  scale_x_continuous(expand = expansion(mult = c(0, 0.05)), limits = c(0, 1)) +
+  #facet_wrap(~Motif, ncol = 1) +
+  force_panelsizes(cols = unit(2, "in"), rows = unit(0.7, "in")) +
+  theme(axis.title.y = element_blank(),
+        axis.title.x = element_blank(),
+        plot.margin = unit(c(0,0,0,0), "in")) +
+  scale_y_discrete(position = "right"),
+ggplot() + theme_void(),
+ggplot() + theme_void()
+)
+}) |> unlist()
+
+ggarrange(plotlist = plotlist, ncol = 8, align = "v", nrow = nrow(homer_denovo), widths = rep(c(0.05, 0.05, 0.05), nrow(homer_denovo)))
+ggsave(paste0("plots/HOMER/", pop, "_up_motifs.pdf"), height = homer_up_denovo$Motif |> unique() |> length() * 1.05, width = 17)
+}
+```
+
+### Down peaks
+```{r}
+for (pop in c("CD8_Memory", "CD4_Memory", "NK", "CD4_naive")){
+homer_denovo <- read_delim(paste0("ATAC/HOMER/", pop, "_down_peaks/nonRedundant.motifs"), col_names = F) |> 
+  filter(str_detect(X1, ">"),
+         X4 < log(1e-12)) |> 
+  rowid_to_column("rowid") |> 
+  mutate(Motif = paste0("motif", rowid),
+         P = exp(X4),
+         Target = X6 |> str_extract("T:.*B") |> str_extract("[0-9]+\\.[0-9][0-9]\\%") |> str_remove("\\%") |> as.numeric(),
+         Background = X6 |> str_extract("B:.*P") |> str_extract("[0-9]+\\.[0-9][0-9]\\%") |> str_remove("\\%") |> as.numeric(),
+         Foldchange = Target/Background) |> 
+  dplyr::select(Motif:Foldchange)
+
+motif_output <- tibble(Motif = "",
+                       Name = "",
+                       Score = 0,
+                       P = 0,
+                       Target = 0,
+                       Background = 0,
+                       Foldchange = 0) |> 
+  dplyr::slice(0)
+
+for(i in 1:nrow(homer_denovo)){
+  homer_denovo1 <- read_delim(paste0("ATAC/HOMER/", pop, "_down_peaks/homerResults/motif", i, ".info.html"), col_names = F) |> 
+    filter(str_detect(X1, "<H4>|Score:|Alignment:"))
+  
+  tmp <- homer_denovo1 |> 
+    mutate(Type = rep(c("Name", "Score", "Alignment"), nrow(homer_denovo1) / 3),
+           Info = str_remove_all(X1, "<H4>|</H4>|<TR>|</TR>|<TD>|</TD>|</TD|Score:"),
+           Motif = paste0("motif", i),
+           Info = case_when(Info == "Alignment:<FONT" ~ X2,
+                            TRUE ~ Info)) |> 
+    dplyr::select(-X1, -X2) |> 
+    pivot_wider(names_from = Type, values_from = Info, values_fn = list) |> 
+    unnest(c(Name, Score, Alignment)) |> 
+    mutate(Score = as.numeric(Score),
+           Alignment1 = Alignment |> str_remove('face=\\"courier\\">') |> str_remove("</FONT>.*"),
+           Alignment2 = Alignment |> str_remove('.*FONT face="courier">') |> str_remove("</FONT></TD></TR></TABLE>")) |> 
+    dplyr::select(-Alignment) |> 
+    left_join(homer_denovo)
+  
+  motif_output <- rbind(motif_output, tmp)
+}
+
+homer_down_denovo <- motif_output |> 
+  mutate(Name_Short = Name |> str_remove_all("/.*") |> str_remove_all("\\(.*"), .after = Name)
+
+
+plotlist <- lapply(homer_down_denovo$Motif |> unique(), function(motif){
+homer_down_denovo |> 
+  subset(Motif == motif) -> tmp
+
+raster_img <- magick::image_read_svg(paste0("ATAC/HOMER/", pop, "_down_peaks/homerResults/", motif, ".logo.svg"),
+                                     height = 2000,
+                                     width = 5000) |> 
+  as.raster() |> 
+  grid::rasterGrob(interpolate = F)
+
+list(
+ggplot() + theme_void(),
+ggplot() + theme_void(),
+ggplot() + 
+  annotation_custom(raster_img) + 
+  theme_void() +
+  force_panelsizes(rows = unit(2.5, "in"),
+                   cols = unit(2, "in")) +
+  theme(plot.margin = unit(c(0,0,0,0), "in")),
+
+tmp |> 
+  slice_max(Score, n = 1) |> 
+  pivot_longer(cols = Target:Background, names_to = "var", values_to = "pct") |> 
+  ggplot(aes(x = pct, y = var)) +
+  geom_bar(stat = "summary", color = "black", fill = "#6fa8dc", width = 0.8) +
+  theme_bw() +
+  scale_x_continuous(expand = expansion(mult = c(0, 0.1)), limits = c(0, 50)) +
+  #facet_wrap(~Motif, ncol = 1) +
+  force_panelsizes(cols = unit(2, "in"), rows = unit(0.7, "in")) +
+  theme(axis.title.x = element_blank(),
+        axis.title.y = element_blank(),
+        axis.text.y = element_blank(),
+        axis.ticks.y = element_blank(),
+        plot.margin = unit(c(0,0,0,0), "in")),
+  
+tmp |> 
+  slice_max(Score, n = 1) |> 
+  pivot_longer(cols = Target:Background, names_to = "var", values_to = "pct") |> 
+  ggplot(aes(x = -log10(P), y = "p")) +
+  geom_bar(stat = "summary", color = "black", fill = "#9fc5e8", width = 0.5) +
+  theme_bw() +
+  scale_x_continuous(expand = expansion(mult = c(0, 0.1)), limits = c(0, 40)) +
+  #facet_wrap(~Motif, ncol = 1) +
+  force_panelsizes(cols = unit(1, "in"), rows = unit(0.7, "in")) +
+  theme(axis.text.y = element_blank(),
+        axis.title.y = element_blank(),
+        axis.ticks.y = element_blank(),
+        axis.title.x = element_blank(),
+        plot.margin = unit(c(0,0,0,0), "in")),
+
+tmp |> 
+  slice_max(Score, n = 5, with_ties = F) %>% 
+  mutate(Name_Short = factor(Name_Short, levels = rev(.$Name_Short))) |> 
+  ggplot(aes(x = Score, y = Name_Short)) +
+  geom_bar(stat = "summary", color = "black", fill = "#76a5af", width = 0.8) +
+  theme_bw() +
+  scale_x_continuous(expand = expansion(mult = c(0, 0.05)), limits = c(0, 1)) +
+  #facet_wrap(~Motif, ncol = 1) +
+  force_panelsizes(cols = unit(2, "in"), rows = unit(0.7, "in")) +
+  theme(axis.title.y = element_blank(),
+        axis.title.x = element_blank(),
+        plot.margin = unit(c(0,0,0,0), "in")) +
+  scale_y_discrete(position = "right"),
+ggplot() + theme_void(),
+ggplot() + theme_void()
+)
+}) |> unlist()
+
+ggarrange(plotlist = plotlist, ncol = 8, align = "v", nrow = nrow(homer_denovo), widths = rep(c(0.05, 0.05, 0.05), nrow(homer_denovo)))
+ggsave(paste0("plots/HOMER/", pop, "_down_motifs.pdf"), height = homer_down_denovo$Motif |> unique() |> length() * 1.05, width = 17)
+}
+```
+
+## featureplots AUC
+```{r}
+sarcoidosis_integrated[["AUC"]]
+umap_df <- sarcoidosis_integrated@reductions$umap.harmony@cell.embeddings |> 
+  as.data.frame() |> 
+  rownames_to_column("cellID") |> 
+  left_join(sarcoidosis_integrated@meta.data |> select(-cellID) |> rownames_to_column("cellID")) |> 
+  left_join(sarcoidosis_integrated[["AUC"]]$data[rownames(sarcoidosis_integrated[["AUC"]]$data) %in% c("CEBPB-direct-+/+"),] |>
+              as.data.frame() |> 
+              rename(CEBPB_AUC = `sarcoidosis_integrated[["AUC"]]$data[rownames(sarcoidosis_integrated[["AUC"]]$data) %in% c("CEBPB-direct-+/+"), ]`) |> 
+              rownames_to_column("cellID")) |> 
+  dplyr::select(umapharmony_1, umapharmony_2, cluster_names_pseudobulk, CEBPB_AUC, state)
+
+centroids <- umap_df |> 
+  group_by(cluster_names_pseudobulk) |> 
+  summarise(umapharmony_1 = median(umapharmony_1),
+            umapharmony_2 = median(umapharmony_2))
+
+umap_df |> 
+  # subset(cluster_names_pseudobulk %in% c("DC", "CD16_Mono", "CD14_Mono")) |> 
+ggplot(aes(x = umapharmony_1, y = umapharmony_2, color = CEBPB_AUC, label = cluster_names_pseudobulk)) +
+  geom_point(size = 0.8, alpha = 0.5, stroke = 0) +
+  theme_bw() +
+  theme(axis.text = element_blank(),
+        panel.grid = element_blank(),
+        text = element_text(color = "black"),
+        axis.ticks = element_blank(), legend.title = element_blank(),
+        axis.title = element_text(vjust = 0, hjust = 0)) +
+  ylab("UMAP2") +
+  xlab("UMAP1") +
+  # scale_x_continuous(limits = c(NA, -3.2)) +
+  facet_wrap(~"CEBPB AUCell") +
+  force_panelsizes(rows = unit(1.5, "in"),
+                   cols = unit(1.5, "in")) +
+  scale_color_gradient2(low = "grey95", high = "#F4511E") #f1c232
+
+ggsave("plots/umap_CEBPB_AUCell.pdf", height = 5, width = 5)
+```
+
+## featurepltos DORC
+```{r}
+sarc_atac[["DORC"]]
+umap_df <- sarc_atac@reductions$umap.harmony@cell.embeddings |> 
+  as.data.frame() |> 
+  rownames_to_column("cellID") |> 
+  left_join(sarc_atac@meta.data |> select(-cellID) |> rownames_to_column("cellID")) |> 
+  left_join(sarc_atac[["DORC"]]$data[rownames(sarc_atac[["DORC"]]$data) %in% c("CEBPB"),] |>
+              as.data.frame() |> 
+              rename(CEBPB_DORC = `sarc_atac[["DORC"]]$data[rownames(sarc_atac[["DORC"]]$data) %in% c("CEBPB"), ]`) |> 
+              rownames_to_column("cellID")) |> 
+  dplyr::select(umapharmony_1, umapharmony_2, cluster_names_pseudobulk, CEBPB_DORC, state)
+
+centroids <- umap_df |> 
+  group_by(cluster_names_pseudobulk) |> 
+  summarise(umapharmony_1 = median(umapharmony_1),
+            umapharmony_2 = median(umapharmony_2))
+
+umap_df |> 
+  # subset(cluster_names_pseudobulk %in% c("DC", "CD16_Mono", "CD14_Mono")) |> 
+ggplot(aes(x = umapharmony_1, y = umapharmony_2, color = CEBPB_DORC, label = cluster_names_pseudobulk)) +
+  geom_point(size = 0.8, alpha = 0.5, stroke = 0) +
+  theme_bw() +
+  theme(axis.text = element_blank(),
+        panel.grid = element_blank(),
+        text = element_text(color = "black"),
+        axis.ticks = element_blank(), legend.title = element_blank(),
+        axis.title = element_text(vjust = 0, hjust = 0)) +
+  ylab("UMAP2") +
+  xlab("UMAP1") +
+  # scale_x_continuous(limits = c(NA, -3.2)) +
+  facet_wrap(~"CEBPB DORC") +
+  force_panelsizes(rows = unit(1.5, "in"),
+                   cols = unit(1.5, "in")) +
+  scale_color_gradient2(low = "grey95", high = "#F4511E") #f1c232
+
+ggsave("plots/umap_CEBPB_DORC.pdf", height = 5, width = 5)
+```
+
+## Coverage Plot CEBPB
+```{r}
+library(rtracklayer)
+library(ggcoverage)
+
+bw_healthy <- rtracklayer::import.bw("ATAC/normalized_bigwigs/CD14_Mono_healthy.bw")
+bw_sarcoidosis <- import.bw("ATAC/normalized_bigwigs/CD14_Mono_sarcoidosis.bw")
+
+
+links <- read.table("ATAC/all_links.bedpe", header = F)
+links |> 
+  subset(V1 == "chr20") |> 
+  subset(V5 == 50190734) -> cebpb_links
+
+cebpb_links |> 
+  mutate(strand = sign(V6 - V3),
+         start = case_when(strand == 1 ~ V3,
+                           strand == -1 ~ V6),
+         end = case_when(strand == 1 ~ V6,
+                         strand == -1 ~ V3))  -> cebpb_links
+
+Links(sarc_atac) <- GRanges(seqnames = cebpb_links$V1,
+                            ranges = IRanges(start = cebpb_links$start,
+                                             end = cebpb_links$end),
+                            score = cebpb_links$V7)
+
+
+ggarrange(
+LinkPlot(sarc_atac, region = "chr20-50100000-50350000") +
+  theme_void()+
+  scale_y_reverse() +
+  scale_color_gradient2(mid = "grey50", high = "grey50") +
+  scale_x_continuous(expand = expansion(mult = c(0, 0)), limits = c(50100000,50350000)) +
+  theme(legend.position = "none",
+        axis.line.x = element_blank()) +
+  force_panelsizes(cols = unit(5, "in"),
+                   rows = unit(0.7, "in")),
+
+bw_sarcoidosis |> 
+  subset(seqnames == "chr20") |> 
+  subsetByOverlaps(GRanges(seqnames = "chr20", ranges = IRanges(start = 50100000, end = 50350000))) |> 
+  as.data.frame() |> 
+  pivot_longer(cols = c(start, end), names_to = "type", values_to = "pos") |> 
+  #subset(!score < 0.1) |> 
+  ggplot(aes(x = pos, y = score)) +
+  #geom_line(linewidth = 0.05, color = "#1d4c6e") +
+  geom_ribbon(fill = "#1d4c6e", aes(ymin = 0, ymax = score))  +
+  geom_rect(aes(xmin = 50283819 - 2000,
+                xmax = 50284319 + 2000,
+                ymin = 0, ymax = 17),
+            alpha = 0.01,
+            color = "grey",
+            fill = "grey",
+            linewidth = 0) +
+  geom_rect(aes(xmin = 50194953 - 2000,
+                xmax = 50195453 + 2000,
+                ymin = 0, ymax = 17),
+            alpha = 0.01,
+            color = "grey",
+            fill = "grey",
+            linewidth = 0) +
+  theme_bw() +
+  theme(axis.title.x = element_blank(),
+        panel.grid = element_blank(),
+        axis.ticks.x = element_blank(),
+        axis.text.x = element_blank()) +
+  scale_x_continuous(expand = expansion(mult = c(0, 0))) +
+  scale_y_continuous(expand = expansion(mult = c(0, 0)), limits = c(0, 17)) +
+  #xlab("chr20") +
+  ylab("normalized signal") +
+  force_panelsizes(cols = unit(5, "in"),
+                   rows = unit(0.7, "in")),
+
+Signac::AnnotationPlot(sarc_atac, region = "chr20-50100000-50350000", extend.downstream = 0, extend.upstream = 0) +
+  theme_bw() +
+  scale_x_continuous(expand = expansion(mult = c(0, 0)), limits = c(50100000, 50350000)) +
+  force_panelsizes(cols = unit(5, "in"),
+                   rows = unit(0.5, "in")) +
+  theme(axis.text.y = element_blank(),
+        axis.title.y = element_blank(),
+        axis.ticks.y = element_blank(),
+        panel.grid = element_blank()),
+ncol = 1, align = "v"
+)
+
+ggsave("DORC_CEBPB.pdf", height = 4, width = 8)
+
+bw_healthy |> 
+  subset(seqnames == "chr20") |> 
+  subsetByOverlaps(GRanges(seqnames = "chr20", ranges = IRanges(start = 50283819 - 1000, end = 50284319 + 1000))) |> 
+  as.data.frame() |> 
+  pivot_longer(cols = c(start, end), names_to = "type", values_to = "pos") |> 
+  #subset(!score < 0.1) |> 
+  ggplot(aes(x = pos, y = score)) +
+  geom_line(linewidth = 0.5, color = "black") +
+  #geom_ribbon(fill = "#1d4c6e", aes(ymin = 0, ymax = score)) +
+  theme_bw() +
+  theme(axis.title.x = element_blank(),
+        panel.grid = element_blank(),
+        axis.text.x = element_blank(),
+        axis.ticks.x =element_blank(),
+        axis.title.y = element_blank()) +
+  scale_x_continuous(expand = expansion(mult = c(0, 0))) +
+  scale_y_continuous(expand = expansion(mult = c(0, 0)), limits = c(0, 12)) +
+  xlab("chr20") +
+  ylab("normalized signal") +
+  facet_wrap(~"chr20:50283819-50284319") +
+  force_panelsizes(cols = unit(1.6, "in"),
+                   rows = unit(1.6, "in"))-> p1
+  
+
+bw_healthy |> 
+  subset(seqnames == "chr20") |> 
+  subsetByOverlaps(GRanges(seqnames = "chr20", ranges = IRanges(start = 50283819 - 1000, end = 50284319 + 1000))) |> 
+  as.data.frame() |> 
+  pivot_longer(cols = c(start, end), names_to = "type", values_to = "pos") |> 
+  #subset(!score < 0.1) |> 
+  ggplot(aes(x = pos, y = score)) +
+  geom_ribbon(data = bw_sarcoidosis |> 
+                subset(seqnames == "chr20") |> 
+                subsetByOverlaps(GRanges(seqnames = "chr20",
+                                         ranges = IRanges(start = 50283819 - 1000,
+                                                          end = 50284319 + 1000))) |>
+                as.data.frame() |> 
+                pivot_longer(cols = c(start, end),
+                             names_to = "type",
+                             values_to = "pos"), 
+                fill = "#1d4c6e",
+              aes(ymin = 0, ymax = score, x = pos)) +
+  geom_line(linewidth = 0.5, color = "grey70") +
+  theme_bw() +
+  facet_wrap(~"CD14 monocyte\nchr20:50283819-50284319") +
+  theme(panel.grid = element_blank()) +
+  scale_x_continuous(expand = expansion(mult = c(0, 0))) +
+  scale_y_continuous(expand = expansion(mult = c(0, 0)), limits = c(0, 12)) +
+  xlab("chr20") +
+  ylab("normalized signal") +
+  force_panelsizes(rows = unit(1.5, "in"),
+                   cols = unit(1.7, "in")) -> p2
+
+ggarrange(p1,p2, ncol = 1, align = "v")
+
+p2
+
+ggsave("CEBPB_peak.pdf", height = 5, width = 4)
+```
+
+## Coverage Plot PFKFB3
+```{r}
+library(rtracklayer)
+library(ggcoverage)
+
+bw_healthy <- rtracklayer::import.bw("ATAC/normalized_bigwigs/CD14_Mono_healthy.bw")
+bw_sarcoidosis <- import.bw("ATAC/normalized_bigwigs/CD14_Mono_sarcoidosis.bw")
+
+all_fc_atac |> 
+  subset(celltype == "CD14_Mono") |> View()
+
+# chr1-2300309-2300809
+
+
+links <- read.table("ATAC/all_links.bedpe", header = F) |> 
+  mutate(strand = sign(V6 - V3),
+         start = case_when(strand == 1 ~ V3,
+                           strand == -1 ~ V6),
+         end = case_when(strand == 1 ~ V6,
+                         strand == -1 ~ V3))
+
+Links(sarc_atac) <- GRanges(seqnames = links$V1,
+                            ranges = IRanges(start = links$start,
+                                             end = links$end),
+                            score = links$V7)
+
+
+# chr10-6236137-6236637
+# chr10-6220976-6221476
+# chr10-6236912-6237412
+# chr10-6233471-6233971
+# chr10-6232279-6232779
+# chr10-6221670-6222170
+# chr10-6232924-6233424
+# chr10-6223916-6224416
+# chr10-6230235-6230735
+
+
+ggarrange(
+Signac::LinkPlot(sarc_atac, region = "chr10-6130000-6260000") +
+  theme_void() +
+  scale_y_reverse() +
+  scale_color_gradient2(mid = "grey50", high = "grey50") +
+  scale_x_continuous(expand = expansion(mult = c(0, 0)), limits = c(6130000,6260000)) +
+  theme(legend.position = "none",
+        axis.line.x = element_blank()) +
+  force_panelsizes(cols = unit(5, "in"),
+                   rows = unit(0.7, "in")),
+
+bw_healthy |> 
+  subset(seqnames == "chr10") |> 
+  subsetByOverlaps(GRanges(seqnames = "chr10", ranges = IRanges(start = 6130000, end = 6260000))) |> 
+  as.data.frame() |> 
+  pivot_longer(cols = c(start, end), names_to = "type", values_to = "pos") |> 
+  #subset(!score < 0.1) |> 
+  ggplot(aes(x = pos, y = score)) +
+  #geom_line(linewidth = 0.05, color = "#1d4c6e") +
+  geom_ribbon(fill = "grey70", aes(ymin = 0, ymax = score)) +
+  geom_rect(aes(xmin = 6236137 - 1000,
+                xmax = 6236637 + 1000,
+                ymin = 0, ymax = 11),
+            alpha = 0.01,
+            color = "grey",
+            fill = "grey",
+            linewidth = 0) +
+  theme_bw() +
+  theme(axis.title.x = element_blank(),
+        panel.grid = element_blank(),
+        axis.ticks.x = element_blank(),
+        axis.text.x = element_blank()) +
+  scale_x_continuous(expand = expansion(mult = c(0, 0))) +
+  scale_y_continuous(expand = expansion(mult = c(0, 0)), limits = c(0, 11)) +
+  #xlab("chr20") +
+  ylab("normalized signal") +
+  force_panelsizes(cols = unit(5, "in"),
+                   rows = unit(0.7, "in")),
+
+bw_sarcoidosis |> 
+  subset(seqnames == "chr10") |> 
+  subsetByOverlaps(GRanges(seqnames = "chr10", ranges = IRanges(start = 6130000, end = 6260000))) |> 
+  as.data.frame() |> 
+  pivot_longer(cols = c(start, end), names_to = "type", values_to = "pos") |> 
+  #subset(!score < 0.1) |> 
+  ggplot(aes(x = pos, y = score)) +
+  #geom_line(linewidth = 0.05, color = "#1d4c6e") +
+  geom_ribbon(fill = "#1d4c6e", aes(ymin = 0, ymax = score)) +
+  geom_rect(aes(xmin = 6236137 - 1000,
+                xmax = 6236637 + 1000,
+                ymin = 0, ymax = 11),
+            alpha = 0.01,
+            color = "grey",
+            fill = "grey",
+            linewidth = 0) +
+  theme_bw() +
+  theme(axis.title.x = element_blank(),
+        panel.grid = element_blank(),
+        axis.ticks.x = element_blank(),
+        axis.text.x = element_blank()) +
+  scale_x_continuous(expand = expansion(mult = c(0, 0))) +
+  scale_y_continuous(expand = expansion(mult = c(0, 0)), limits = c(0, 11)) +
+  #xlab("chr20") +
+  ylab("normalized signal") +
+  force_panelsizes(cols = unit(5, "in"),
+                   rows = unit(0.7, "in")),
+
+Signac::AnnotationPlot(sarc_atac, region = "chr10-6130000-6260000", extend.downstream = 0, extend.upstream = 0) +
+  theme_bw() +
+  scale_x_continuous(expand = expansion(mult = c(0, 0)), limits = c(6130000, 6260000)) +
+  force_panelsizes(cols = unit(5, "in"),
+                   rows = unit(0.5, "in")) +
+  theme(axis.text.y = element_blank(),
+        axis.title.y = element_blank(),
+        axis.ticks.y = element_blank(),
+        panel.grid = element_blank()),
+ncol = 1, align = "v"
+)
+
+ggsave("plots/PFKFB3_locus.pdf", width = 8, height = 5)
+
+6236637 + 125000
+
+#ggsave("DORC_CEBPB.pdf", height = 4, width = 8)
+chr10-6236137-6236637
+bw_healthy |> 
+  subset(seqnames == "chr10") |> 
+  subsetByOverlaps(GRanges(seqnames = "chr10", ranges = IRanges(start = 6236137 - 80000, end = 6236637 + 2000))) |> 
+  as.data.frame() |> 
+  pivot_longer(cols = c(start, end), names_to = "type", values_to = "pos") |> 
+  #subset(!score < 0.1) |> 
+  ggplot(aes(x = pos, y = score)) +
+  geom_line(linewidth = 0.5, color = "black") +
+  #geom_ribbon(fill = "#1d4c6e", aes(ymin = 0, ymax = score)) +
+  theme_bw() +
+  theme(axis.title.x = element_blank(),
+        panel.grid = element_blank(),
+        axis.text.x = element_blank(),
+        axis.ticks.x =element_blank(),
+        axis.title.y = element_blank()) +
+  scale_x_continuous(expand = expansion(mult = c(0, 0))) +
+  scale_y_continuous(expand = expansion(mult = c(0, 0)), limits = c(0, 3)) +
+  xlab("chr10") +
+  ylab("normalized signal") +
+  facet_wrap(~"chr10:6236137-6236637") +
+  force_panelsizes(cols = unit(1.6, "in"),
+                   rows = unit(1.6, "in"))-> p1
+  
+bw_healthy |> 
+  subset(seqnames == "chr10") |> 
+  subsetByOverlaps(GRanges(seqnames = "chr10", ranges = IRanges(start = 6236137 - 80000, end = 6236637 + 2000))) |> 
+  as.data.frame() |> 
+  pivot_longer(cols = c(start, end), names_to = "type", values_to = "pos") |> 
+  #subset(!score < 0.1) |> 
+  ggplot(aes(x = pos, y = score)) +
+  geom_ribbon(data = bw_sarcoidosis |> 
+                subset(seqnames == "chr10") |> 
+                subsetByOverlaps(GRanges(seqnames = "chr10",
+                                         ranges = IRanges(start = 6236137 - 80000,
+                                                          end = 6236637 + 2000))) |>
+                as.data.frame() |> 
+                pivot_longer(cols = c(start, end),
+                             names_to = "type",
+                             values_to = "pos"), 
+                fill = "#1d4c6e",
+              aes(ymin = 0, ymax = score, x = pos)) +
+  geom_line(linewidth = 0.5, color = "black") +
+  theme_bw() +
+  theme(panel.grid = element_blank()) +
+  scale_x_continuous(expand = expansion(mult = c(0, 0))) +
+  scale_y_continuous(expand = expansion(mult = c(0, 0)), limits = c(0, 3)) +
+  xlab("chr10") +
+  ylab("normalized signal") +
+  force_panelsizes(cols = unit(1.6, "in"),
+                   rows = unit(1.6, "in")) -> p2
+
+ggarrange(p1,p2, ncol = 1, align = "v")
+
+ggsave("PFKFB3_peak.pdf", height = 5, width = 4)
+```
+
+## Coverage Plot APOBEC3A
+```{r}
+library(rtracklayer)
+library(ggcoverage)
+
+bw_healthy <- rtracklayer::import.bw("ATAC/normalized_bigwigs/CD14_Mono_healthy.bw")
+bw_sarcoidosis <- import.bw("ATAC/normalized_bigwigs/CD14_Mono_sarcoidosis.bw")
+
+all_fc_atac |> 
+  subset(celltype == "CD14_Mono") |>
+  subset(padj < 0.05) |> 
+  subset(gene_name %in% c("APOBEC3A", "APOBEC3B")) |> 
+  mutate(chr = word(peak, 1, sep = "-"),
+         start = word(peak, 2, sep = "-"),
+         end = word(peak, 3, sep = "-")) |> 
+  arrange(padj) |> 
+  select(chr, start, end) -> roi
+
+# APOBEC3A
+# chr22-38966179-38966679
+# chr22-38972321-38972821
+# chr22-38963207-38963707
+# chr22-38970475-38970975
+# chr22-38963872-38964372
+# chr22-38967714-38968214
+# APOBEC3B
+# chr22-38982106-38982606
+
+links <- read.table("ATAC/all_links.bedpe", header = F) |> 
+  mutate(strand = sign(V6 - V3),
+         start = case_when(strand == 1 ~ V3,
+                           strand == -1 ~ V6),
+         end = case_when(strand == 1 ~ V6,
+                         strand == -1 ~ V3))
+
+Links(sarc_atac) <- GRanges(seqnames = links$V1,
+                            ranges = IRanges(start = links$start,
+                                             end = links$end),
+                            score = links$V7)
+
+ggarrange(
+LinkPlot(sarc_atac, region = "chr22-38950000-38997000") +
+  theme_void()+
+  scale_y_reverse() +
+  scale_color_gradient2(mid = "grey50", high = "grey50") +
+  scale_x_continuous(expand = expansion(mult = c(0, 0)), limits = c(38950000,38997000)) +
+  theme(legend.position = "none",
+        axis.line.x = element_blank()) +
+  force_panelsizes(cols = unit(5, "in"),
+                   rows = unit(0.7, "in")),
+
+bw_healthy |> 
+  subset(seqnames == "chr22") |> 
+  subsetByOverlaps(GRanges(seqnames = "chr22", ranges = IRanges(start = 38950000, end = 38997000))) |> 
+  as.data.frame() |> 
+  pivot_longer(cols = c(start, end), names_to = "type", values_to = "pos") |> 
+  #subset(!score < 0.1) |> 
+  ggplot(aes(x = pos, y = score)) +
+  #geom_line(linewidth = 0.05, color = "#1d4c6e") +
+  geom_ribbon(fill = "grey70", aes(ymin = 0, ymax = score)) +
+  geom_rect(aes(xmin = roi$start[1] |> as.numeric(),
+                xmax = roi$end[1] |> as.numeric(),
+                ymin = 0, ymax = 15),
+            alpha = 0.01,
+            color = "grey",
+            fill = "grey",
+            linewidth = 0) +
+  geom_rect(aes(xmin = roi$start[2] |> as.numeric(),
+                xmax = roi$end[2] |> as.numeric(),
+                ymin = 0, ymax = 15),
+            alpha = 0.01,
+            color = "grey",
+            fill = "grey",
+            linewidth = 0) +
+  geom_rect(aes(xmin = roi$start[3] |> as.numeric(),
+                xmax = roi$end[3] |> as.numeric(),
+                ymin = 0, ymax = 15),
+            alpha = 0.01,
+            color = "grey",
+            fill = "grey",
+            linewidth = 0) +
+  geom_rect(aes(xmin = roi$start[4] |> as.numeric(),
+                xmax = roi$end[4] |> as.numeric(),
+                ymin = 0, ymax = 15),
+            alpha = 0.01,
+            color = "grey",
+            fill = "grey",
+            linewidth = 0) +
+  geom_rect(aes(xmin = roi$start[5] |> as.numeric(),
+                xmax = roi$end[5] |> as.numeric(),
+                ymin = 0, ymax = 15),
+            alpha = 0.01,
+            color = "grey",
+            fill = "grey",
+            linewidth = 0) +
+  geom_rect(aes(xmin = roi$start[6] |> as.numeric(),
+                xmax = roi$end[6] |> as.numeric(),
+                ymin = 0, ymax = 15),
+            alpha = 0.01,
+            color = "grey",
+            fill = "grey",
+            linewidth = 0) +
+  geom_rect(aes(xmin = roi$start[7] |> as.numeric(),
+                xmax = roi$end[7] |> as.numeric(),
+                ymin = 0, ymax = 15),
+            alpha = 0.01,
+            color = "grey",
+            fill = "grey",
+            linewidth = 0) +
+  theme_bw() +
+  theme(axis.title.x = element_blank(),
+        panel.grid = element_blank(),
+        axis.ticks.x = element_blank(),
+        axis.text.x = element_blank()) +
+  scale_x_continuous(expand = expansion(mult = c(0, 0))) +
+  scale_y_continuous(expand = expansion(mult = c(0, 0)), limits = c(0, 15)) +
+  #xlab("chr20") +
+  ylab("normalized signal") +
+  force_panelsizes(cols = unit(5, "in"),
+                   rows = unit(0.7, "in")),
+
+bw_sarcoidosis |> 
+  subset(seqnames == "chr22") |> 
+  subsetByOverlaps(GRanges(seqnames = "chr22", ranges = IRanges(start = 38950000, end = 38997000))) |> 
+  as.data.frame() |> 
+  pivot_longer(cols = c(start, end), names_to = "type", values_to = "pos") |> 
+  #subset(!score < 0.1) |> 
+  ggplot(aes(x = pos, y = score)) +
+  #geom_line(linewidth = 0.05, color = "#1d4c6e") +
+  geom_ribbon(fill = "#1d4c6e", aes(ymin = 0, ymax = score)) +
+  geom_rect(aes(xmin = roi$start[1] |> as.numeric(),
+                xmax = roi$end[1] |> as.numeric(),
+                ymin = 0, ymax = 15),
+            alpha = 0.01,
+            color = "grey",
+            fill = "grey",
+            linewidth = 0) +
+  geom_rect(aes(xmin = roi$start[2] |> as.numeric(),
+                xmax = roi$end[2] |> as.numeric(),
+                ymin = 0, ymax = 15),
+            alpha = 0.01,
+            color = "grey",
+            fill = "grey",
+            linewidth = 0) +
+  geom_rect(aes(xmin = roi$start[3] |> as.numeric(),
+                xmax = roi$end[3] |> as.numeric(),
+                ymin = 0, ymax = 15),
+            alpha = 0.01,
+            color = "grey",
+            fill = "grey",
+            linewidth = 0) +
+  geom_rect(aes(xmin = roi$start[4] |> as.numeric(),
+                xmax = roi$end[4] |> as.numeric(),
+                ymin = 0, ymax = 15),
+            alpha = 0.01,
+            color = "grey",
+            fill = "grey",
+            linewidth = 0) +
+  geom_rect(aes(xmin = roi$start[5] |> as.numeric(),
+                xmax = roi$end[5] |> as.numeric(),
+                ymin = 0, ymax = 15),
+            alpha = 0.01,
+            color = "grey",
+            fill = "grey",
+            linewidth = 0) +
+  geom_rect(aes(xmin = roi$start[6] |> as.numeric(),
+                xmax = roi$end[6] |> as.numeric(),
+                ymin = 0, ymax = 15),
+            alpha = 0.01,
+            color = "grey",
+            fill = "grey",
+            linewidth = 0) +
+  geom_rect(aes(xmin = roi$start[7] |> as.numeric(),
+                xmax = roi$end[7] |> as.numeric(),
+                ymin = 0, ymax = 15),
+            alpha = 0.01,
+            color = "grey",
+            fill = "grey",
+            linewidth = 0) +
+  theme_bw() +
+  theme(axis.title.x = element_blank(),
+        panel.grid = element_blank(),
+        axis.ticks.x = element_blank(),
+        axis.text.x = element_blank()) +
+  scale_x_continuous(expand = expansion(mult = c(0, 0))) +
+  scale_y_continuous(expand = expansion(mult = c(0, 0)), limits = c(0, 15)) +
+  #xlab("chr20") +
+  ylab("normalized signal") +
+  force_panelsizes(cols = unit(5, "in"),
+                   rows = unit(0.7, "in")),
+
+Signac::AnnotationPlot(sarc_atac, region = "chr22-38950000-38997000", extend.downstream = 0, extend.upstream = 0) +
+  theme_bw() +
+  scale_x_continuous(expand = expansion(mult = c(0, 0)), limits = c(38950000, 38997000)) +
+  force_panelsizes(cols = unit(5, "in"),
+                   rows = unit(0.5, "in")) +
+  theme(axis.text.y = element_blank(),
+        axis.title.y = element_blank(),
+        axis.ticks.y = element_blank(),
+        panel.grid = element_blank()),
+ncol = 1, align = "v"
+)
+
+ggsave("plots/APOBEC3A_locus.pdf", width = 8, height = 5)
+```
+
+## Coverage Plot AKT2
+```{r}
+library(rtracklayer)
+library(ggcoverage)
+
+bw_healthy <- rtracklayer::import.bw("ATAC/normalized_bigwigs/CD4_memory_healthy.bw")
+bw_sarcoidosis <- import.bw("ATAC/normalized_bigwigs/CD4_memory_sarcoidosis.bw")
+
+links <- read.table("ATAC/all_links.bedpe", header = F) |> 
+  mutate(strand = sign(V6 - V3),
+         start = case_when(strand == 1 ~ V3,
+                           strand == -1 ~ V6),
+         end = case_when(strand == 1 ~ V6,
+                         strand == -1 ~ V3))
+
+Links(sarc_atac) <- GRanges(seqnames = links$V1,
+                            ranges = IRanges(start = links$start,
+                                             end = links$end),
+                            score = links$V7)
+
+region_end = 40300000
+region_start = 40220000
+
+ggarrange(
+Signac::LinkPlot(sarc_atac, region = paste0("chr19-", region_start, "-", region_end)) +
+  theme_void() +
+  scale_y_reverse() +
+  scale_color_gradient2(mid = "grey50", high = "grey50") +
+  scale_x_continuous(expand = expansion(mult = c(0, 0)), limits = c(region_start, region_end)) +
+  theme(legend.position = "none",
+        axis.line.x = element_blank()) +
+  force_panelsizes(cols = unit(5, "in"),
+                   rows = unit(0.7, "in")),
+
+bw_healthy |> 
+  subset(seqnames == "chr19") |> 
+  subsetByOverlaps(GRanges(seqnames = "chr19", ranges = IRanges(start = region_start, end = region_end))) |> 
+  as.data.frame() |> 
+  pivot_longer(cols = c(start, end), names_to = "type", values_to = "pos") |> 
+  #subset(!score < 0.1) |> 
+  ggplot(aes(x = pos, y = score)) +
+  #geom_line(linewidth = 0.05, color = "#1d4c6e") +
+  geom_ribbon(fill = "grey70", aes(ymin = 0, ymax = score)) +
+  geom_rect(aes(xmin = 40284311 - 1000,
+                xmax = 40284811 + 1000,
+                ymin = 0, ymax = 20),
+            alpha = 0.01,
+            color = "grey",
+            fill = "grey",
+            linewidth = 0) +
+  theme_bw() +
+  theme(axis.title.x = element_blank(),
+        panel.grid = element_blank(),
+        axis.ticks.x = element_blank(),
+        axis.text.x = element_blank()) +
+  scale_x_continuous(expand = expansion(mult = c(0, 0))) +
+  scale_y_continuous(expand = expansion(mult = c(0, 0)), limits = c(0, 20)) +
+  #xlab("chr20") +
+  ylab("normalized signal") +
+  force_panelsizes(cols = unit(5, "in"),
+                   rows = unit(0.7, "in")),
+
+bw_sarcoidosis |> 
+  subset(seqnames == "chr19") |> 
+  subsetByOverlaps(GRanges(seqnames = "chr19", ranges = IRanges(start = region_start, end = region_end))) |> 
+  as.data.frame() |> 
+  pivot_longer(cols = c(start, end), names_to = "type", values_to = "pos") |> 
+  #subset(!score < 0.1) |> 
+  ggplot(aes(x = pos, y = score)) +
+  #geom_line(linewidth = 0.05, color = "#1d4c6e") +
+  geom_ribbon(fill = "#1d4c6e", aes(ymin = 0, ymax = score)) +
+  geom_rect(aes(xmin = 40284311 - 1000,
+                xmax = 40284811 + 1000,
+                ymin = 0, ymax = 20),
+            alpha = 0.01,
+            color = "grey",
+            fill = "grey",
+            linewidth = 0) +
+  theme_bw() +
+  theme(axis.title.x = element_blank(),
+        panel.grid = element_blank(),
+        axis.ticks.x = element_blank(),
+        axis.text.x = element_blank()) +
+  scale_x_continuous(expand = expansion(mult = c(0, 0))) +
+  scale_y_continuous(expand = expansion(mult = c(0, 0)), limits = c(0, 20)) +
+  #xlab("chr20") +
+  ylab("normalized signal") +
+  force_panelsizes(cols = unit(5, "in"),
+                   rows = unit(0.7, "in")),
+
+Signac::AnnotationPlot(sarc_atac, region = paste0("chr19-", region_start, "-", region_end), extend.downstream = 0, extend.upstream = 0) +
+  theme_bw() +
+  scale_x_continuous(expand = expansion(mult = c(0, 0)), limits = c(region_start, region_end)) +
+  force_panelsizes(cols = unit(5, "in"),
+                   rows = unit(0.5, "in")) +
+  theme(axis.text.y = element_blank(),
+        axis.title.y = element_blank(),
+        axis.ticks.y = element_blank(),
+        panel.grid = element_blank()),
+ncol = 1, align = "v"
+)
+
+ggsave("plots/AKT2_locus.pdf", width = 8, height = 5)
+
+bw_healthy <- rtracklayer::import.bw("ATAC/normalized_bigwigs/CD4_memory_healthy.bw")
+bw_sarcoidosis <- import.bw("ATAC/normalized_bigwigs/CD4_memory_sarcoidosis.bw")
+  
+bw_healthy |> 
+  subset(seqnames == "chr19") |> 
+  subsetByOverlaps(GRanges(seqnames = "chr19", ranges = IRanges(start = 40284311 - 1000, end = 40284811 + 2000))) |> 
+  as.data.frame() |> 
+  pivot_longer(cols = c(start, end), names_to = "type", values_to = "pos") |> 
+  #subset(!score < 0.1) |> 
+  ggplot(aes(x = pos, y = score)) +
+  geom_ribbon(data = bw_sarcoidosis |> 
+                subset(seqnames == "chr19") |> 
+                subsetByOverlaps(GRanges(seqnames = "chr19",
+                                         ranges = IRanges(start = 40284311 - 1000,
+                                                          end = 40284811 + 2000))) |>
+                as.data.frame() |> 
+                pivot_longer(cols = c(start, end),
+                             names_to = "type",
+                             values_to = "pos"), 
+                fill = "#1d4c6e",
+              aes(ymin = 0, ymax = score, x = pos)) +
+  geom_line(linewidth = 0.5, color = "black") +
+  theme_bw() +
+  theme(panel.grid = element_blank()) +
+  scale_x_continuous(expand = expansion(mult = c(0, 0))) +
+  scale_y_continuous(expand = expansion(mult = c(0, 0)), limits = c(0, 25)) +
+  facet_wrap(~"CD4 memory\nchr19:40284311-40284811") +
+  xlab("chr19") +
+  ylab("normalized signal") +
+  force_panelsizes(cols = unit(2, "in"),
+                   rows = unit(2, "in"))
+
+ggsave("AKT2_peak_memory.pdf", height = 5, width = 4)
+
+bw_healthy <- rtracklayer::import.bw("ATAC/normalized_bigwigs/CD4_naive_healthy.bw")
+bw_sarcoidosis <- import.bw("ATAC/normalized_bigwigs/CD4_naive_sarcoidosis.bw")
+
+bw_healthy |> 
+  subset(seqnames == "chr19") |> 
+  subsetByOverlaps(GRanges(seqnames = "chr19", ranges = IRanges(start = 40284311 - 1000, end = 40284811 + 2000))) |> 
+  as.data.frame() |> 
+  pivot_longer(cols = c(start, end), names_to = "type", values_to = "pos") |> 
+  #subset(!score < 0.1) |> 
+  ggplot(aes(x = pos, y = score)) +
+  geom_ribbon(data = bw_sarcoidosis |> 
+                subset(seqnames == "chr19") |> 
+                subsetByOverlaps(GRanges(seqnames = "chr19",
+                                         ranges = IRanges(start = 40284311 - 1000,
+                                                          end = 40284811 + 2000))) |>
+                as.data.frame() |> 
+                pivot_longer(cols = c(start, end),
+                             names_to = "type",
+                             values_to = "pos"), 
+                fill = "#1d4c6e",
+              aes(ymin = 0, ymax = score, x = pos)) +
+  geom_line(linewidth = 0.5, color = "black") +
+  theme_bw() +
+  theme(panel.grid = element_blank()) +
+  scale_x_continuous(expand = expansion(mult = c(0, 0))) +
+  scale_y_continuous(expand = expansion(mult = c(0, 0)), limits = c(0, 30)) +
+  facet_wrap(~"CD4 naive\nchr19:40284311-40284811") +
+  xlab("chr19") +
+  ylab("normalized signal") +
+  force_panelsizes(cols = unit(2, "in"),
+                   rows = unit(2, "in"))
+
+ggsave("AKT2_peak_naive.pdf", height = 5, width = 4)
+```
+
+## CEBPB footprint
+
+### step 1+2
+```{r}
+library(motifmatchr)
+library(JASPAR2020)
+library(TFBSTools)
+library(BSgenome.Hsapiens.UCSC.hg38)
+
+# extract position frequency matrices for the motifs
+pwm <- getMatrixSet(
+  x = JASPAR2020,
+  opts = list(species = 9606, all_versions = FALSE)
+)
+
+pwm <- pwm["MA0466.2"]
+
+pwm$MA0466.2
+
+sarc_atac <- AddMotifs(sarc_atac, genome = BSgenome.Hsapiens.UCSC.hg38, pfm = pwm)
+
+CEBPB_motif_positions <- sarc_atac[["ATAC"]]@motifs@positions$MA0466.2
+
+all_fc_atac |>
+  subset(celltype == "CD14_Mono") |> 
+  subset(!is.na(padj)) |>
+  #subset(log2FoldChange > 0) |> 
+  #subset(padj < 0.05) |> 
+  subset(baseMean > 10) |> 
+  mutate(chromosome = word(peak, 1, sep = "-"),
+         start = word(peak, 2, sep = "-") |> as.numeric(),
+         end = word(peak, 3, sep = "-") |> as.numeric()) |> 
+  dplyr::select(chromosome, start, end) -> tmp
+
+mono_peaks <- GRanges(seqnames = tmp$chromosome, IRanges(start = tmp$start, end = tmp$end))
+
+#subsetByOverlaps(mono_peaks, CEBPB_motif_positions)
+
+tmp_motifs <- subsetByOverlaps(CEBPB_motif_positions, mono_peaks)
+
+tmp_motifs |>
+  as.data.frame() |> 
+  select(seqnames, start, end, width, score, strand) |> 
+  write_tsv("ATAC/footprint_bedfiles/CEBPB_mono.bed", col_names = F)
+```
+
+### step 3
+
+```{bash, eval = f}
+computeMatrix reference-point \
+  --referencePoint center \
+  -R ATAC/footprint_bedfiles/CEBPB_mono.bed \
+  -S ATAC/Tn5_bigwigs/CD14_Mono_healthy_Tn5.bw ATAC/Tn5_bigwigs/CD14_Mono_sarcoidosis_Tn5.bw \
+  -a 50 \
+  -b 50 \
+  --binSize 1 \
+  --missingDataAsZero \
+  -o ATAC/footprint_bedfiles/gz/CEBPB_mono.bed.gz
+  
+plotHeatmap \
+  -m ATAC/footprint_bedfiles/gz/CEBPB_mono.bed.gz \
+  -out plots/HOMER_footprints/CEBPB_mono.pdf \
+  --colorMap Blues \
+  --refPointLabel "CEBPB motif" \
+  --samplesLabel "healthy" "sarcoidosis" \
+  --sortUsing mean \
+  --heatmapHeight 4 \
+  --heatmapWidth 9 \
+  --zMin 0
+
+plotProfile \
+  -m ATAC/footprint_bedfiles/gz/CEBPB_mono.bed.gz \
+  -out plots/HOMER_footprints/CEBPB_mono_profile.pdf \
+  --outFileNameData ATAC/footprint_bedfiles/profiles/CEBPB_mono_profile.tab \
+  --perGroup \
+  --refPointLabel "motif_center" \
+  --samplesLabel "healthy" "sarcoidosis" \
+  --legendLocation upper-left \
+  --plotHeight 8 --plotWidth 8
+```
+
+```{r}
+library(BSgenome.Hsapiens.UCSC.hg38)
+library(GenomicRanges)
+library(rtracklayer)
+library(Biostrings)
+library(ggseqlogo)
+library(TFBSTools)
+
+bed_df <- read.table("ATAC/footprint_bedfiles/CEBPB_mono.bed", stringsAsFactors = FALSE)
+
+genome <- BSgenome.Hsapiens.UCSC.hg38
+
+gr <- GRanges(seqnames = bed_df[[1]],
+                ranges = IRanges(start = bed_df[[2]], end = bed_df[[3]]),
+                strand = bed_df[[6]])
+
+centers <- floor((start(gr) + end(gr)) / 2)
+new_start <- centers - 49
+new_end   <- centers + 50
+gr_centered <- GRanges(seqnames = seqnames(gr),
+                       ranges = IRanges(start = new_start, end = new_end),
+                       strand = strand(gr))
+seqs <- getSeq(genome, gr_centered)
+cm <- consensusMatrix(seqs, baseOnly=TRUE)[c("A","C","G","T"), ]
+pfm_empirical <- cm
+colnames(pfm_empirical) <- seq_len(ncol(pfm_empirical))
+pwm_empirical <- sweep(pfm_empirical, 2, colSums(pfm_empirical), FUN="/")
+
+profile <- read_lines("ATAC/footprint_bedfiles/profiles/CEBPB_mono_profile.tab")
+
+profile <- lapply(profile, function(line){
+  str_split(line, pattern = "\t") |> 
+  unlist()
+})
+
+profile
+
+data.frame(healthy = profile[[3]][-(1:2)],
+           sarcoidosis = profile[[4]][-(1:2)]) |> 
+  rownames_to_column("bin") |> 
+  pivot_longer(cols = healthy:sarcoidosis, names_to = "state", values_to = "cov") |> 
+  mutate(cov = as.numeric(cov),
+         bin = as.numeric(bin)) -> profile
+
+list(
+ggplot() + theme_void() + force_panelsizes(rows = unit(0.5, "in"),
+                                           cols = unit(3, "in")),
+
+ggplot(profile, aes(x = bin, y = cov, color = state, group = state)) +
+  geom_line() +
+  scale_y_continuous(expand = expansion(mult = c(0, 0.1)), limits = c(0, NA)) +
+  scale_x_continuous(expand = expansion(mult = c(0, 0)), limits = c(25, 75)) +
+  theme_bw() +
+  force_panelsizes(cols = unit(3, "in"),
+                   rows = unit(2, "in")) +
+  scale_color_manual(values = c("healthy" = "grey30",
+                                "sarcoidosis" = "#1d4c6e")) +
+  theme(axis.ticks.x = element_blank(),
+        axis.title.x = element_blank(),
+        legend.position = "none") +
+  ylab("Tn5 insertions per million"),
+  
+ggseqlogo(pwm_empirical, method="bits") +
+  ggplot2::theme_bw() +
+  theme(#axis.text.x = element_blank(),
+        axis.ticks.x = element_blank(),
+        axis.title.x = element_blank()) +
+  force_panelsizes(cols = unit(3, "in"),
+                   rows = unit(1, "in")) +
+  #geom_vline(xintercept = 50.5) +
+  scale_x_continuous(expand = expansion(mult = c(0, 0)), limits = c(25, 75))
+) -> plotlist
+
+ggarrange(plotlist = plotlist, ncol = 1, align = "v")
+ggsave("plots/HOMER_footprints/CEBPB_mono_merged.pdf", height = 5.5, width = 4)
+```
+
+## HOMER denovo based footprints
+
+### step 1
+```{r}
+library(motifmatchr)
+library(JASPAR2020)
+library(TFBSTools)
+library(BSgenome.Hsapiens.UCSC.hg38)
+
+# extract position frequency matrices for the motifs
+pops <- c("CD14_Mono", "CD4_naive", "CD4_memory", "CD8_memory", "NK")
+
+final.list <- PFMatrixList()
+for (pop in pops){
+homer_denovo <- read_delim(paste0("ATAC/HOMER/", pop, "_up_peaks/nonRedundant.motifs"), col_names = F) |> 
+  dplyr::filter(str_detect(X1, ">"),
+         X4 < log(1e-12)) |> 
+  rowid_to_column("rowid") |> 
+  mutate(Motif = paste0("motif", rowid),
+         P = exp(X4),
+         Target = X6 |> str_extract("T:.*B") |> str_extract("[0-9]+\\.[0-9][0-9]\\%") |> str_remove("\\%") |> as.numeric(),
+         Background = X6 |> str_extract("B:.*P") |> str_extract("[0-9]+\\.[0-9][0-9]\\%") |> str_remove("\\%") |> as.numeric(),
+         Foldchange = Target/Background) |> 
+  dplyr::select(Motif:Foldchange)
+
+motifs <- homer_denovo$Motif
+
+pfm.list <- PFMatrixList()
+
+for (motif in motifs){
+homer_pwm <- read_delim(paste0("ATAC/HOMER/", pop, "_up_peaks/homerResults/", motif, ".motif"), delim = "\t") |> 
+  as.matrix()
+
+colnames(homer_pwm) <- NULL
+
+homer_pwm <- homer_pwm[,1:4] |> t()
+rownames(homer_pwm) <- c("A", "C", "G", "T")
+homer_pwm
+
+homer_pfmat <- PFMatrix(ID = paste0(pop, "_", motif), name = paste0(pop, "_", motif), profileMatrix = homer_pwm * 1000)
+
+pfm.list <- c(pfm.list,
+              PFMatrixList(PFMatrix(ID = paste0(pop, "_", motif),
+                                    name = paste0(pop, "_", motif),
+                                    profileMatrix = homer_pwm * 1000)))
+}
+
+names(pfm.list) <- paste0(pop, "_", motifs)
+
+final.list <- c(final.list, pfm.list)
+}
+```
+
+### step 2
+
+#### step 2.1 add motifs to scATAC object
+
+```{r}
+pops <- c("CD14_Mono", "CD4_naive", "CD4_memory", "CD8_memory", "NK")
+
+final.list$CD14_Mono_motif1
+
+jaspar <- getMatrixSet(
+  x = JASPAR2020,
+  opts = list(collection = "CORE", tax_group = 'vertebrates', all_versions = FALSE)
+)
+
+tmp.pfm <- c(jaspar, final.list)
+
+sarc_atac <- AddMotifs(sarc_atac,
+                        genome = BSgenome.Hsapiens.UCSC.hg38,
+                        pfm = final.list)
+```
+
+#### step 2.2 get motif positions
+
+```{r}
+motifs <- sarc_atac[["ATAC"]]@motifs@motif.names |> unlist()
+
+for (motif in motifs){
+pop <- motif |> str_remove("_motif.*")
+motif_positions <- sarc_atac[["ATAC"]]@motifs@positions[[motif]]
+
+all_fc_atac |>
+  subset(celltype == pop) |> 
+  subset(!is.na(padj)) |> 
+  #subset(log2FoldChange > 0) |> 
+  #subset(padj < 0.05) |> 
+  subset(baseMean > 10) |> 
+  mutate(chromosome = word(peak, 1, sep = "-"),
+         start = word(peak, 2, sep = "-") |> as.numeric(),
+         end = word(peak, 3, sep = "-") |> as.numeric()) |> 
+  dplyr::select(chromosome, start, end) -> tmp
+
+pop_peaks <- GRanges(seqnames = tmp$chromosome, IRanges(start = tmp$start, end = tmp$end))
+
+tmp_motifs <- subsetByOverlaps(motif_positions, pop_peaks)
+
+tmp_motifs |> 
+  as.data.frame() |> 
+  dplyr::select(seqnames, start, end, width, score, strand) |> 
+  write_tsv(paste0("ATAC/footprint_bedfiles/", motif, ".bed"), col_names = F)
+}
+```
+
+### step 3
+
+```{bash, eval = f}
+for pop in CD14_Mono CD4_memory CD4_naive CD8_memory NK; do
+motifs=($(ls ATAC/footprint_bedfiles/${pop}_motif*.bed | sed -E 's/.*(motif[0-9]+)\.bed/\1/'))
+for motif in $motifs; do
+computeMatrix reference-point \
+  --referencePoint center \
+  -R ATAC/footprint_bedfiles/${pop}_${motif}.bed \
+  -S ATAC/Tn5_bigwigs/${pop}_healthy_Tn5.bw ATAC/Tn5_bigwigs/${pop}_sarcoidosis_Tn5.bw \
+  -a 50 \
+  -b 50 \
+  --binSize 1 \
+  --missingDataAsZero \
+  -o ATAC/footprint_bedfiles/gz/${pop}_${motif}.bed.gz
+  
+plotHeatmap \
+  -m ATAC/footprint_bedfiles/gz/${pop}_${motif}.bed.gz \
+  -out plots/HOMER_footprints/${pop}_${motif}.pdf \
+  --colorMap Blues \
+  --refPointLabel "${pop}_${motif}" \
+  --samplesLabel "healthy" "sarcoidosis" \
+  --sortUsing mean \
+  --heatmapHeight 4 \
+  --heatmapWidth 9 \
+  --zMin 0
+
+plotProfile \
+  -m ATAC/footprint_bedfiles/gz/${pop}_${motif}.bed.gz \
+  -out plots/HOMER_footprints/${pop}_${motif}_profile.pdf \
+  --outFileNameData ATAC/footprint_bedfiles/profiles/${pop}_${motif}_profile.tab \
+  --perGroup \
+  --refPointLabel "motif_center" \
+  --samplesLabel "healthy" "sarcoidosis" \
+  --legendLocation upper-left \
+  --plotHeight 8 --plotWidth 8
+done
+done
+```
+
+### step 4
+
+```{r}
+library(BSgenome.Hsapiens.UCSC.hg38)
+library(GenomicRanges)
+library(rtracklayer)
+library(Biostrings)
+library(ggseqlogo)
+library(TFBSTools)
+
+for (pop in c("CD14_Mono", "CD4_memory", "CD4_naive", "CD8_memory", "NK")){
+motifs <- list.files("ATAC/footprint_bedfiles/", pattern = pop) |> str_remove(".bed") |> str_remove(paste0(pop, "_"))
+for (motif in motifs){
+bed_df <- read.table(paste0("ATAC/footprint_bedfiles/", pop, "_", motif, ".bed"), stringsAsFactors = FALSE)
+
+genome <- BSgenome.Hsapiens.UCSC.hg38
+
+gr <- GRanges(seqnames = bed_df[[1]],
+                ranges = IRanges(start = bed_df[[2]], end = bed_df[[3]]),
+                strand = bed_df[[6]])
+
+centers <- floor((start(gr) + end(gr)) / 2)
+new_start <- centers - 49
+new_end   <- centers + 50
+gr_centered <- GRanges(seqnames = seqnames(gr),
+                       ranges = IRanges(start = new_start, end = new_end),
+                       strand = strand(gr))
+seqs <- getSeq(genome, gr_centered)
+cm <- consensusMatrix(seqs, baseOnly=TRUE)[c("A","C","G","T"), ]
+pfm_empirical <- cm
+colnames(pfm_empirical) <- seq_len(ncol(pfm_empirical))
+pwm_empirical <- sweep(pfm_empirical, 2, colSums(pfm_empirical), FUN="/")
+
+profile <- read_lines(paste0("ATAC/footprint_bedfiles/profiles/", pop, "_", motif, "_profile.tab"))
+
+profile <- lapply(profile, function(line){
+  str_split(line, pattern = "\t") |> 
+  unlist()
+})
+
+profile
+
+data.frame(healthy = profile[[3]][-(1:2)],
+           sarcoidosis = profile[[4]][-(1:2)]) |> 
+  rownames_to_column("bin") |> 
+  pivot_longer(cols = healthy:sarcoidosis, names_to = "state", values_to = "cov") |> 
+  mutate(cov = as.numeric(cov),
+         bin = as.numeric(bin)) -> profile
+
+list(
+ggplot() + theme_void() + force_panelsizes(rows = unit(0.5, "in"),
+                                           cols = unit(3, "in")),
+
+ggplot(profile, aes(x = bin, y = cov, color = state, group = state)) +
+  geom_line() +
+  scale_y_continuous(expand = expansion(mult = c(0, 0.1)), limits = c(0, NA)) +
+  scale_x_continuous(expand = expansion(mult = c(0, 0)), limits = c(25, 75)) +
+  theme_bw() +
+  force_panelsizes(cols = unit(3, "in"),
+                   rows = unit(2, "in")) +
+  scale_color_manual(values = c("healthy" = "grey30",
+                                "sarcoidosis" = "#1d4c6e")) +
+  theme(axis.ticks.x = element_blank(),
+        axis.title.x = element_blank(),
+        legend.position = "none") +
+  ylab("Tn5 insertions per million"),
+  
+ggseqlogo(pwm_empirical, method="bits") +
+  ggplot2::theme_bw() +
+  theme(#axis.text.x = element_blank(),
+        axis.ticks.x = element_blank(),
+        axis.title.x = element_blank()) +
+  force_panelsizes(cols = unit(3, "in"),
+                   rows = unit(1, "in")) +
+  #geom_vline(xintercept = 50.5) +
+  scale_x_continuous(expand = expansion(mult = c(0, 0)), limits = c(25, 75))
+) -> plotlist
+
+ggarrange(plotlist = plotlist, ncol = 1, align = "v")
+ggsave(paste0("plots/HOMER_footprints/", pop, "_", motif, "_merged.pdf"), height = 5.5, width = 4)
+}}
+```
+
+## HOMER denovo based Footprints (down)
+
+### step 1
+
+```{r}
+library(motifmatchr)
+library(JASPAR2020)
+library(TFBSTools)
+library(BSgenome.Hsapiens.UCSC.hg38)
+
+# extract position frequency matrices for the motifs
+pops <- c("CD4_naive", "CD4_memory", "CD8_memory", "NK")
+
+final.list <- PFMatrixList()
+for (pop in pops){
+homer_denovo <- read_delim(paste0("ATAC/HOMER/", pop, "_down_peaks/nonRedundant.motifs"), col_names = F) |> 
+  filter(str_detect(X1, ">"),
+         X4 < log(1e-12)) |> 
+  rowid_to_column("rowid") |> 
+  mutate(Motif = paste0("motif", rowid),
+         P = exp(X4),
+         Target = X6 |> str_extract("T:.*B") |> str_extract("[0-9]+\\.[0-9][0-9]\\%") |> str_remove("\\%") |> as.numeric(),
+         Background = X6 |> str_extract("B:.*P") |> str_extract("[0-9]+\\.[0-9][0-9]\\%") |> str_remove("\\%") |> as.numeric(),
+         Foldchange = Target/Background) |> 
+  dplyr::select(Motif:Foldchange)
+
+motifs <- homer_denovo$Motif
+
+pfm.list <- PFMatrixList()
+
+for (motif in motifs){
+homer_pwm <- read_delim(paste0("ATAC/HOMER/", pop, "_down_peaks/homerResults/", motif, ".motif"), delim = "\t") |> 
+  as.matrix()
+
+colnames(homer_pwm) <- NULL
+
+homer_pwm <- homer_pwm[,1:4] |> t()
+rownames(homer_pwm) <- c("A", "C", "G", "T")
+homer_pwm
+
+homer_pfmat <- PFMatrix(ID = paste0(pop, "_", motif), name = paste0(pop, "_", motif), profileMatrix = homer_pwm * 1000)
+
+pfm.list <- c(pfm.list,
+              PFMatrixList(PFMatrix(ID = paste0(pop, "_", motif),
+                                    name = paste0(pop, "_", motif),
+                                    profileMatrix = homer_pwm * 1000)))
+}
+
+names(pfm.list) <- paste0(pop, "_", motifs)
+
+final.list <- c(final.list, pfm.list)
+}
+```
+
+### step 2
+
+```{r}
+pops <- c("CD4_naive", "CD4_memory", "CD8_memory", "NK")
+
+sarc_atac <- AddMotifs(sarc_atac,
+                        genome = BSgenome.Hsapiens.UCSC.hg38,
+                        pfm = final.list)
+
+motifs <- sarc_atac[["ATAC"]]@motifs@motif.names
+
+for (motif in motifs){
+pop <- motif |> str_remove("_motif.*")
+motif_positions <- sarc_atac[["ATAC"]]@motifs@positions[[motif]]
+
+all_fc_atac |>
+  subset(celltype == pop) |> 
+  subset(!is.na(padj)) |> 
+  #subset(log2FoldChange > 0) |> 
+  #subset(padj < 0.05) |> 
+  subset(baseMean > 10) |> 
+  mutate(chromosome = word(peak, 1, sep = "-"),
+         start = word(peak, 2, sep = "-") |> as.numeric(),
+         end = word(peak, 3, sep = "-") |> as.numeric()) |> 
+  dplyr::select(chromosome, start, end) -> tmp
+
+pop_peaks <- GRanges(seqnames = tmp$chromosome, IRanges(start = tmp$start, end = tmp$end))
+
+tmp_motifs <- subsetByOverlaps(motif_positions, pop_peaks)
+
+tmp_motifs |> 
+  as.data.frame() |> 
+  dplyr::select(seqnames, start, end, width, score, strand) |> 
+  write_tsv(paste0("ATAC/footprint_bedfiles_down/", motif, ".bed"), col_names = F)
+}
+```
+
+### step 3
+
+```{bash, eval = f}
+for pop in CD4_memory CD4_naive CD8_memory NK; do
+motifs=($(ls ATAC/footprint_bedfiles_down/${pop}_motif*.bed | sed -E 's/.*(motif[0-9]+)\.bed/\1/'))
+for motif in $motifs; do
+computeMatrix reference-point \
+  --referencePoint center \
+  -R ATAC/footprint_bedfiles_down/${pop}_${motif}.bed \
+  -S ATAC/Tn5_bigwigs/${pop}_healthy_Tn5.bw ATAC/Tn5_bigwigs/${pop}_sarcoidosis_Tn5.bw \
+  -a 50 \
+  -b 50 \
+  --binSize 1 \
+  --missingDataAsZero \
+  -o ATAC/footprint_bedfiles_down/gz/${pop}_${motif}.bed.gz
+  
+plotHeatmap \
+  -m ATAC/footprint_bedfiles_down/gz/${pop}_${motif}.bed.gz \
+  -out plots/HOMER_footprints_down/${pop}_${motif}.pdf \
+  --colorMap Blues \
+  --refPointLabel "${pop}_${motif}" \
+  --samplesLabel "healthy" "sarcoidosis" \
+  --sortUsing mean \
+  --heatmapHeight 4 \
+  --heatmapWidth 9 \
+  --zMin 0
+
+plotProfile \
+  -m ATAC/footprint_bedfiles_down/gz/${pop}_${motif}.bed.gz \
+  -out plots/HOMER_footprints_down/${pop}_${motif}_profile.pdf \
+  --outFileNameData ATAC/footprint_bedfiles_down/profiles/${pop}_${motif}_profile.tab \
+  --perGroup \
+  --refPointLabel "motif_center" \
+  --samplesLabel "healthy" "sarcoidosis" \
+  --legendLocation upper-left \
+  --plotHeight 8 --plotWidth 8
+done
+done
+```
+
+### step 4
+
+```{r}
+library(BSgenome.Hsapiens.UCSC.hg38)
+library(GenomicRanges)
+library(rtracklayer)
+library(Biostrings)
+library(ggseqlogo)
+library(TFBSTools)
+
+for (pop in c("CD14_Mono", "CD4_memory", "CD4_naive", "CD8_memory", "NK")){
+motifs <- list.files("ATAC/footprint_bedfiles_down/", pattern = pop) |> str_remove(".bed") |> str_remove(paste0(pop, "_"))
+for (motif in motifs){
+bed_df <- read.table(paste0("ATAC/footprint_bedfiles_down/", pop, "_", motif, ".bed"), stringsAsFactors = FALSE)
+
+genome <- BSgenome.Hsapiens.UCSC.hg38
+
+gr <- GRanges(seqnames = bed_df[[1]],
+                ranges = IRanges(start = bed_df[[2]], end = bed_df[[3]]),
+                strand = bed_df[[6]])
+
+centers <- floor((start(gr) + end(gr)) / 2)
+new_start <- centers - 49
+new_end   <- centers + 50
+gr_centered <- GRanges(seqnames = seqnames(gr),
+                       ranges = IRanges(start = new_start, end = new_end),
+                       strand = strand(gr))
+seqs <- getSeq(genome, gr_centered)
+cm <- consensusMatrix(seqs, baseOnly=TRUE)[c("A","C","G","T"), ]
+pfm_empirical <- cm
+colnames(pfm_empirical) <- seq_len(ncol(pfm_empirical))
+pwm_empirical <- sweep(pfm_empirical, 2, colSums(pfm_empirical), FUN="/")
+
+profile <- read_lines(paste0("ATAC/footprint_bedfiles_down/profiles/", pop, "_", motif, "_profile.tab"))
+
+profile <- lapply(profile, function(line){
+  str_split(line, pattern = "\t") |> 
+  unlist()
+})
+
+profile
+
+data.frame(healthy = profile[[3]][-(1:2)],
+           sarcoidosis = profile[[4]][-(1:2)]) |> 
+  rownames_to_column("bin") |> 
+  pivot_longer(cols = healthy:sarcoidosis, names_to = "state", values_to = "cov") |> 
+  mutate(cov = as.numeric(cov),
+         bin = as.numeric(bin)) -> profile
+
+list(
+ggplot() + theme_void() + force_panelsizes(rows = unit(0.5, "in"),
+                                           cols = unit(3, "in")),
+
+ggplot(profile, aes(x = bin, y = cov, color = state, group = state)) +
+  geom_line() +
+  scale_y_continuous(expand = expansion(mult = c(0, 0.1)), limits = c(0, NA)) +
+  scale_x_continuous(expand = expansion(mult = c(0, 0)), limits = c(25, 75)) +
+  theme_bw() +
+  force_panelsizes(cols = unit(3, "in"),
+                   rows = unit(2, "in")) +
+  scale_color_manual(values = c("healthy" = "grey30",
+                                "sarcoidosis" = "#1d4c6e")) +
+  theme(axis.ticks.x = element_blank(),
+        axis.title.x = element_blank(),
+        legend.position = "none") +
+  ylab("Tn5 insertions per million"),
+  
+ggseqlogo(pwm_empirical, method="bits") +
+  ggplot2::theme_bw() +
+  theme(#axis.text.x = element_blank(),
+        axis.ticks.x = element_blank(),
+        axis.title.x = element_blank()) +
+  force_panelsizes(cols = unit(3, "in"),
+                   rows = unit(1, "in")) +
+  #geom_vline(xintercept = 50.5) +
+  scale_x_continuous(expand = expansion(mult = c(0, 0)), limits = c(25, 75))
+) -> plotlist
+
+ggarrange(plotlist = plotlist, ncol = 1, align = "v")
+ggsave(paste0("plots/HOMER_footprints_down/", pop, "_", motif, "_merged.pdf"), height = 5.5, width = 4)
+}}
+```
+
+
+### Plot peaks containing ISREs
+
+```{r}
+ISRE <- read.table("ATAC/footprint_bedfiles/CD14_Mono_motif1.bed", header = F, sep = "\t") |> subset(V5 > 12)
+ISRE <- GenomicRanges::GRanges(seqnames = ISRE$V1, ranges = IRanges(start = ISRE$V2, end = ISRE$V3), strand = ISRE$V6)
+
+mono_peaks <- read.table("ATAC/HOMER/background_peaks/CD14_Mono_background_peaks.bed")
+mono_peaks <- GenomicRanges::GRanges(seqnames = mono_peaks$V1, ranges = IRanges(start = mono_peaks$V2, end = mono_peaks$V3))
+
+subsetByOverlaps(mono_peaks, ISRE) |> as.data.frame() |> 
+  mutate(peak = paste(seqnames, start, end, sep = "-")) |> 
+  pull(peak) -> ISRE_peaks
+
+genome <- BSgenome.Hsapiens.UCSC.hg38
+seqs <- getSeq(genome, ISRE)
+cm <- consensusMatrix(seqs, baseOnly=TRUE)[c("A","C","G","T"), ]
+cm
+
+all_fc_atac |>
+  subset(celltype == "CD14_Mono") |> 
+  subset(!is.na(padj)) |> 
+  mutate(nlog10p = -log10(padj),
+         signif = case_when(padj < 0.05 & log2FoldChange > 0 ~ "sarcoidosis",
+                            padj < 0.05 & log2FoldChange < 0 ~ "healthy",
+                            TRUE ~ "non_signif"),
+         in_cebpb = peak%in%ISRE_peaks) |> 
+  arrange(in_cebpb) -> tmp
+
+tmp |> 
+  subset(in_cebpb) |> pull(signif) |> table() |> as.data.frame() -> n_de
+
+n_de |> subset(Var1 == "sarcoidosis") |> pull(Freq) |> as.character() -> up_in_sarc
+n_de |> subset(Var1 == "healthy") |> pull(Freq) |> as.character() -> down_in_sarc
+
+tmp |> 
+  ggplot(aes(x = log2FoldChange, y = nlog10p)) +
+  geom_point(aes(color = in_cebpb), size = 3) +
+  scale_color_manual(values = c("FALSE" = "grey70",
+                               "TRUE" = "steelblue")) +
+  # geom_vline(xintercept = c(-0.5, 0.5), color = "grey50") +
+  geom_hline(yintercept = -log10(0.05), color = "grey50") +
+  geom_text_repel(aes(label = ifelse(in_cebpb %in% c("TRUE", "CEBPB") & log2FoldChange > 0 & padj < 0.05, gene_name, "")),
+                  max.overlaps = Inf,
+                  direction = "y",
+                  nudge_x = 3 - tmp$log2FoldChange,
+                  nudge_y = 0,
+                  segment.size = 0.2,
+                  vjust = 0,
+                  hjust = 0,
+                  size = 3) +
+  annotate(geom = "text", x = -4.5, label = ifelse(length(down_in_sarc) == 0, "0", down_in_sarc), y = 5, size = 5, color = "#6fa8dc") +
+  annotate(geom = "text", x =  4.5, label = up_in_sarc, y = 5, size = 5, color = "#e06666") + 
+  ggtitle(subtitle = "CD14 monocyte DARs with ISRE", label = "") +
+  scale_x_continuous(limits = c(-4.5, 4.5)) +
+  scale_y_continuous(expand = expansion(mult = c(0.01, 0.05)), limits = c(0, 5)) +
+  ylab("-log10(p.adj)") +
+  xlab("log2fc sarcoidosis vs healthy") +
+  theme_bw() +
+  theme(legend.position = "none",
+        axis.text = element_text(size = 15),
+        axis.title = element_text(size = 15)) +
+  force_panelsizes(rows = unit(4, "in"),
+                   cols = unit(4, "in")) +
+  xlab("log2FC(sarcoidosis/healthy)") -> monocyte_peaks
+
+ggsave("plots/volcano_monos_atac_ISRE.pdf", height = 7, width = 9)
+```
+
+```{r}
+ClosestFeature(sarc_atac[["ATAC"]], regions = ISRE_peaks) |> 
+  subset(distance < 1000) |> 
+  pull(gene_name) |> 
+  table() |> 
+  as.data.frame() |>
+  arrange(-Freq) |> 
+  subset(Freq >= 1) |> 
+  pull(Var1) -> ISRE_genes
+
+all_fc_rna |>
+  subset(celltype == "CD14_Mono") |> 
+  subset(gene == "STAT3") |> 
+  subset(padj < 0.05)
+
+all_fc_rna |>
+  subset(celltype == "CD14_Mono") |> 
+  subset(!is.na(padj)) |> 
+  mutate(nlog10p = -log10(padj),
+         signif = case_when(padj < 0.05 & log2FoldChange > 0 ~ "sarcoidosis",
+                            padj < 0.05 & log2FoldChange < 0 ~ "healthy",
+                            TRUE ~ "non_signif"),
+         in_cebpb = gene %in% eregulons_gsea$`STAT1_direct_+/+`) |> 
+  arrange(in_cebpb) -> tmp
+
+tmp |> 
+  subset(in_cebpb) |> pull(signif) |> table() |> as.data.frame() -> n_de
+
+n_de |> subset(Var1 == "sarcoidosis") |> pull(Freq) |> as.character() -> up_in_sarc
+n_de |> subset(Var1 == "healthy") |> pull(Freq) |> as.character() -> down_in_sarc
+
+tmp |> 
+  ggplot(aes(x = log2FoldChange, y = nlog10p)) +
+  geom_point(aes(color = in_cebpb), size = 3) +
+  scale_color_manual(values = c("FALSE" = "grey70",
+                               "TRUE" = "steelblue")) +
+  geom_vline(xintercept = c(-0.5, 0.5), color = "grey50") +
+  geom_hline(yintercept = -log10(0.05), color = "grey50") +
+  geom_text_repel(aes(label = ifelse(in_cebpb %in% c("TRUE", "CEBPB") & log2FoldChange > 0.5 & padj < 0.0005, gene, "")),
+                  max.overlaps = Inf,
+                  direction = "y",
+                  nudge_x = 3 - tmp$log2FoldChange,
+                  nudge_y = 0,
+                  segment.size = 0.2,
+                  vjust = 0,
+                  hjust = 0,
+                  size = 3) +
+  annotate(geom = "text", x = -4.5, label = ifelse(length(down_in_sarc) == 0, "0", down_in_sarc), y = 15, size = 5, color = "#6fa8dc") +
+  annotate(geom = "text", x =  4.5, label = up_in_sarc, y = 15, size = 5, color = "#e06666") + 
+  ggtitle(subtitle = "CD14 monocyte DEGs STAT1 regulon", label = "") +
+  scale_x_continuous(limits = c(-4.5, 4.5)) +
+  scale_y_continuous(expand = expansion(mult = c(0.01, 0.05)), limits = c(0, 15)) +
+  ylab("-log10(p.adj)") +
+  xlab("log2fc sarcoidosis vs healthy") +
+  theme_bw() +
+  theme(legend.position = "none",
+        axis.text = element_text(size = 15),
+        axis.title = element_text(size = 15)) +
+  force_panelsizes(rows = unit(4, "in"),
+                   cols = unit(4, "in")) +
+  xlab("log2FC(sarcoidosis/healthy)") -> monocytes_genes
+
+ggarrange(monocyte_peaks, monocytes_genes, ncol = 2, align = "h")
+
+ggsave("plots/volcano_monos_ISRE.pdf", height = 7, width = 17)
+```
+
+### Plot peaks containing NFKB motifs
+
+```{r}
+NFKB <- read.table("ATAC/footprint_bedfiles/CD4_memory_motif1.bed", header = F, sep = "\t") |> subset(V5 > 12)
+NFKB <- GenomicRanges::GRanges(seqnames = NFKB$V1, ranges = IRanges(start = NFKB$V2, end = NFKB$V3), strand = NFKB$V6)
+
+background_peaks <- read.table("ATAC/HOMER/background_peaks/CD4_memory_background_peaks.bed")
+background_peaks <- GenomicRanges::GRanges(seqnames = background_peaks$V1, ranges = IRanges(start = background_peaks$V2, end = background_peaks$V3))
+
+subsetByOverlaps(background_peaks, NFKB) |> as.data.frame() |> 
+  mutate(peak = paste(seqnames, start, end, sep = "-")) |> 
+  pull(peak) -> NFKB_peaks
+
+genome <- BSgenome.Hsapiens.UCSC.hg38
+seqs <- getSeq(genome, NFKB)
+cm <- consensusMatrix(seqs, baseOnly=TRUE)[c("A","C","G","T"), ]
+cm
+
+all_fc_atac |>
+  subset(celltype == "CD4_memory") |> 
+  subset(!is.na(padj)) |> 
+  mutate(nlog10p = -log10(padj),
+         signif = case_when(padj < 0.05 & log2FoldChange > 0 ~ "sarcoidosis",
+                            padj < 0.05 & log2FoldChange < 0 ~ "healthy",
+                            TRUE ~ "non_signif"),
+         in_cebpb = peak%in%NFKB_peaks) |> 
+  arrange(in_cebpb) -> tmp
+
+tmp |> 
+  subset(in_cebpb) |> pull(signif) |> table() |> as.data.frame() -> n_de
+
+n_de |> subset(Var1 == "sarcoidosis") |> pull(Freq) |> as.character() -> up_in_sarc
+n_de |> subset(Var1 == "healthy") |> pull(Freq) |> as.character() -> down_in_sarc
+
+tmp |> 
+  ggplot(aes(x = log2FoldChange, y = nlog10p)) +
+  geom_point(aes(color = in_cebpb), size = 3) +
+  scale_color_manual(values = c("FALSE" = "grey70",
+                               "TRUE" = "steelblue")) +
+  # geom_vline(xintercept = c(-0.5, 0.5), color = "grey50") +
+  geom_hline(yintercept = -log10(0.05), color = "grey50") +
+  geom_text_repel(aes(label = ifelse(in_cebpb %in% c("TRUE", "CEBPB") & log2FoldChange > 0 & padj < 0.04, gene_name, "")),
+                  max.overlaps = Inf,
+                  direction = "y",
+                  nudge_x = 3 - tmp$log2FoldChange,
+                  nudge_y = 0,
+                  segment.size = 0.2,
+                  vjust = 0,
+                  hjust = 0,
+                  size = 3) +
+  ggplot2::annotate(geom = "text", x = -4.5, label = ifelse(length(down_in_sarc) == 0, "0", down_in_sarc), y = 7, size = 5, color = "#6fa8dc") +
+  ggplot2::annotate(geom = "text", x =  4.5, label = up_in_sarc, y = 7, size = 5, color = "#e06666") + 
+  ggtitle(subtitle = "CD4 memory DARs with NF-kB-like motif", label = "") +
+  scale_x_continuous(limits = c(-4.5, 4.5)) +
+  scale_y_continuous(expand = expansion(mult = c(0.01, 0.05)), limits = c(0, 7)) +
+  ylab("-log10(p.adj)") +
+  xlab("log2fc sarcoidosis vs healthy") +
+  theme_bw() +
+  theme(legend.position = "none",
+        axis.text = element_text(size = 15),
+        axis.title = element_text(size = 15)) +
+  force_panelsizes(rows = unit(4, "in"),
+                   cols = unit(4, "in")) +
+  xlab("log2FC(sarcoidosis/healthy)") -> T_memory_peaks
+
+T_memory_peaks
+
+tmp |> 
+  subset(in_cebpb) |> 
+  pull(stat) |> 
+  mean()
+
+ggsave("plots/volcano_CD4_memory_atac_NFKB.pdf", height = 7, width = 9)
+```
+
+```{r}
+ClosestFeature(sarc_atac[["ATAC"]], regions = NFKB_peaks) |> 
+  subset(distance < 1000) |> 
+  pull(gene_name) |> 
+  table() |> 
+  as.data.frame() |>
+  arrange(-Freq) |> 
+  subset(Freq >= 1) |> 
+  pull(Var1) -> NFKB_genes
+
+
+
+all_fc_rna |>
+  subset(celltype == "CD4_memory") |> 
+  subset(!is.na(padj)) |> 
+  mutate(nlog10p = -log10(padj),
+         signif = case_when(padj < 0.05 & log2FoldChange > 0 ~ "sarcoidosis",
+                            padj < 0.05 & log2FoldChange < 0 ~ "healthy",
+                            TRUE ~ "non_signif"),
+         in_cebpb = gene %in% allpws$HALLMARK_TNFA_SIGNALING_VIA_NFKB) |> 
+  arrange(in_cebpb) -> tmp
+
+tmp |> 
+  subset(in_cebpb) |> pull(signif) |> table() |> as.data.frame() -> n_de
+
+n_de |> subset(Var1 == "sarcoidosis") |> pull(Freq) |> as.character() -> up_in_sarc
+n_de |> subset(Var1 == "healthy") |> pull(Freq) |> as.character() -> down_in_sarc
+
+tmp |> 
+  ggplot(aes(x = log2FoldChange, y = nlog10p)) +
+  geom_point(aes(color = in_cebpb), size = 3) +
+  scale_color_manual(values = c("FALSE" = "grey70",
+                               "TRUE" = "steelblue")) +
+  geom_vline(xintercept = c(-0.5, 0.5), color = "grey50") +
+  geom_hline(yintercept = -log10(0.05), color = "grey50") +
+  geom_text_repel(aes(label = ifelse(in_cebpb %in% c("TRUE", "CEBPB") & log2FoldChange > 0.5 & padj < 0.0005, gene, "")),
+                  max.overlaps = Inf,
+                  direction = "y",
+                  nudge_x = 3 - tmp$log2FoldChange,
+                  nudge_y = 3,
+                  segment.size = 0.2,
+                  vjust = 0,
+                  hjust = 0,
+                  size = 3) +
+  annotate(geom = "text", x = -4.5, label = ifelse(length(down_in_sarc) == 0, "0", down_in_sarc), y = 15, size = 5, color = "#6fa8dc") +
+  annotate(geom = "text", x =  4.5, label = up_in_sarc, y = 15, size = 5, color = "#e06666") + 
+  ggtitle(subtitle = "CD4 memory DEGs with TNF signaling via NF-kB", label = "") +
+  scale_x_continuous(limits = c(-4.5, 4.5)) +
+  scale_y_continuous(expand = expansion(mult = c(0.01, 0.05)), limits = c(0, 15)) +
+  ylab("-log10(p.adj)") +
+  xlab("log2fc sarcoidosis vs healthy") +
+  theme_bw() +
+  theme(legend.position = "none",
+        axis.text = element_text(size = 15),
+        axis.title = element_text(size = 15)) +
+  force_panelsizes(rows = unit(4, "in"),
+                   cols = unit(4, "in")) +
+  xlab("log2FC(sarcoidosis/healthy)") -> T_memory_genes
+
+#ggsave("plots/volcano_CD4_memory_rna_NFKB.pdf", height = 7, width = 9)
+```
+
+### Plot peaks containing NFKB motifs
+
+```{r}
+NFKB <- read.table("ATAC/footprint_bedfiles/CD4_naive_motif1.bed", header = F, sep = "\t") |> subset(V5 > 12)
+NFKB <- GenomicRanges::GRanges(seqnames = NFKB$V1, ranges = IRanges(start = NFKB$V2, end = NFKB$V3), strand = NFKB$V6)
+
+background_peaks <- read.table("ATAC/HOMER/background_peaks/CD4_naive_background_peaks.bed")
+background_peaks <- GenomicRanges::GRanges(seqnames = background_peaks$V1, ranges = IRanges(start = background_peaks$V2, end = background_peaks$V3))
+
+subsetByOverlaps(background_peaks, NFKB) |> as.data.frame() |> 
+  mutate(peak = paste(seqnames, start, end, sep = "-")) |> 
+  pull(peak) -> NFKB_peaks
+
+genome <- BSgenome.Hsapiens.UCSC.hg38
+seqs <- getSeq(genome, NFKB)
+cm <- consensusMatrix(seqs, baseOnly=TRUE)[c("A","C","G","T"), ]
+cm
+
+all_fc_atac |>
+  subset(celltype == "CD4_naive") |> 
+  subset(!is.na(padj)) |> 
+  mutate(nlog10p = -log10(padj),
+         signif = case_when(padj < 0.05 & log2FoldChange > 0 ~ "sarcoidosis",
+                            padj < 0.05 & log2FoldChange < 0 ~ "healthy",
+                            TRUE ~ "non_signif"),
+         in_cebpb = peak%in%NFKB_peaks) |> 
+  arrange(in_cebpb) -> tmp
+
+tmp |> 
+  subset(in_cebpb) |> pull(signif) |> table() |> as.data.frame() -> n_de
+
+n_de |> subset(Var1 == "sarcoidosis") |> pull(Freq) |> as.character() -> up_in_sarc
+n_de |> subset(Var1 == "healthy") |> pull(Freq) |> as.character() -> down_in_sarc
+
+tmp |> 
+  ggplot(aes(x = log2FoldChange, y = nlog10p)) +
+  geom_point(aes(color = in_cebpb), size = 3) +
+  scale_color_manual(values = c("FALSE" = "grey70",
+                               "TRUE" = "steelblue")) +
+  # geom_vline(xintercept = c(-0.5, 0.5), color = "grey50") +
+  geom_hline(yintercept = -log10(0.05), color = "grey50") +
+  geom_text_repel(aes(label = ifelse(in_cebpb %in% c("TRUE", "CEBPB") & log2FoldChange > 0 & padj < 0.05, gene_name, "")),
+                  max.overlaps = Inf,
+                  direction = "y",
+                  nudge_x = 3 - tmp$log2FoldChange,
+                  nudge_y = 0,
+                  segment.size = 0.2,
+                  vjust = 0,
+                  hjust = 0,
+                  size = 3) +
+  ggplot2::annotate(geom = "text", x = -4.5, label = ifelse(length(down_in_sarc) == 0, "0", down_in_sarc), y = 7, size = 5, color = "#6fa8dc") +
+  ggplot2::annotate(geom = "text", x =  4.5, label = up_in_sarc, y = 7, size = 5, color = "#e06666") + 
+  ggtitle(subtitle = "CD4 naive DARs with NF-kB-like motif", label = "") +
+  scale_x_continuous(limits = c(-4.5, 4.5)) +
+  scale_y_continuous(expand = expansion(mult = c(0.01, 0.05)), limits = c(0, 7)) +
+  ylab("-log10(p.adj)") +
+  xlab("log2fc sarcoidosis vs healthy") +
+  theme_bw() +
+  theme(legend.position = "none",
+        axis.text = element_text(size = 15),
+        axis.title = element_text(size = 15)) +
+  force_panelsizes(rows = unit(4, "in"),
+                   cols = unit(4, "in")) +
+  xlab("log2FC(sarcoidosis/healthy)") -> T_naive_peaks
+
+
+T_naive_peaks
+
+tmp |> 
+  subset(in_cebpb) |> 
+  pull(log2FoldChange) |> 
+  mean()
+
+#ggsave("plots/volcano_CD4_naive_atac_NFKB.pdf", height = 7, width = 9)
+```
+
+```{r}
+ClosestFeature(sarc_atac[["ATAC"]], regions = NFKB_peaks) |> 
+  subset(distance < 1000) |> 
+  pull(gene_name) |> 
+  table() |> 
+  as.data.frame() |>
+  arrange(-Freq) |> 
+  subset(Freq >= 1) |> 
+  pull(Var1) -> NFKB_genes
+
+all_fc_rna |>
+  subset(celltype == "CD4_naive") |> 
+  subset(!is.na(padj)) |> 
+  mutate(nlog10p = -log10(padj),
+         signif = case_when(padj < 0.05 & log2FoldChange > 0 ~ "sarcoidosis",
+                            padj < 0.05 & log2FoldChange < 0 ~ "healthy",
+                            TRUE ~ "non_signif"),
+         in_cebpb = gene %in% allpws$HALLMARK_TNFA_SIGNALING_VIA_NFKB) |> 
+  arrange(in_cebpb) -> tmp
+
+tmp |> 
+  subset(in_cebpb) |> pull(signif) |> table() |> as.data.frame() -> n_de
+
+n_de |> subset(Var1 == "sarcoidosis") |> pull(Freq) |> as.character() -> up_in_sarc
+n_de |> subset(Var1 == "healthy") |> pull(Freq) |> as.character() -> down_in_sarc
+
+tmp |> 
+  ggplot(aes(x = log2FoldChange, y = nlog10p)) +
+  geom_point(aes(color = in_cebpb), size = 3) +
+  scale_color_manual(values = c("FALSE" = "grey70",
+                               "TRUE" = "steelblue")) +
+  geom_vline(xintercept = c(-0.5, 0.5), color = "grey50") +
+  geom_hline(yintercept = -log10(0.05), color = "grey50") +
+  geom_text_repel(aes(label = ifelse(in_cebpb %in% c("TRUE", "CEBPB") & log2FoldChange > 0.5 & padj < 0.01, gene, "")),
+                  max.overlaps = Inf,
+                  direction = "y",
+                  nudge_x = 3 - tmp$log2FoldChange,
+                  nudge_y = 3,
+                  segment.size = 0.2,
+                  vjust = 0,
+                  hjust = 0,
+                  size = 3) +
+  annotate(geom = "text", x = -4.5, label = ifelse(length(down_in_sarc) == 0, "0", down_in_sarc), y = 15, size = 5, color = "#6fa8dc") +
+  annotate(geom = "text", x =  4.5, label = up_in_sarc, y = 15, size = 5, color = "#e06666") + 
+  ggtitle(subtitle = "CD4 naive DEGs TNF signaling via NF-kB", label = "") +
+  scale_x_continuous(limits = c(-4.5, 4.5)) +
+  scale_y_continuous(expand = expansion(mult = c(0.01, 0.05)), limits = c(0, 15)) +
+  ylab("-log10(p.adj)") +
+  xlab("log2fc sarcoidosis vs healthy") +
+  theme_bw() +
+  theme(legend.position = "none",
+        axis.text = element_text(size = 15),
+        axis.title = element_text(size = 15)) +
+  force_panelsizes(rows = unit(4, "in"),
+                   cols = unit(4, "in")) +
+  xlab("log2FC(sarcoidosis/healthy)") -> T_naive_genes
+
+ggarrange(T_memory_genes, T_memory_peaks, T_naive_genes, T_naive_peaks, ncol = 2, nrow = 2, align = "v")
+
+ggsave("plots/CD4_all_volcanos.pdf", height = 13, width = 13)
+
+#ggsave("plots/volcano_CD4_naive_rna_NFKB.pdf", height = 7, width = 9)
+```
+
+# Compare regulon activity in CD14 Monocytes and skin macrophages in sarcoidosis lesions
+```{r}
+gse_hm_regulons <- read.csv("RNA/gse_hm_eregulons.csv")
+pse_hm_eregulons <- read.csv("ATAC/pse_hm_eregulons.csv")
+gse_hm_regulons_skin <- read.csv("bocklab_skin_granuloma/gsea_eregulons_skin.csv")
+
+pse_hm_eregulons |> 
+  subset(celltype == "CD14_Mono") |> 
+  subset(padj < 0.05) |> 
+  subset(str_detect(pathway, "_direct_\\+\\/\\+")) |> 
+  mutate(pathway = str_remove(pathway, "_direct_\\+\\/\\+")) |> 
+  pull(pathway) -> consistent_atac
+
+res_rna <- gse_hm_regulons |> 
+  subset(celltype == "CD14_Mono") |> 
+  subset(padj < 0.05) |> 
+  subset(str_detect(pathway, "_direct_\\+\\/\\+")) |> 
+  mutate(pathway = str_remove(pathway, "_direct_\\+\\/\\+")) |> 
+  subset(pathway %in% consistent_atac)
+
+res_atac <- gse_hm_regulons_skin |> 
+  subset(celltype == "macrophage") |> 
+  subset(padj < 0.05)
+
+combined <- res_rna |> 
+  mutate(fc_rna = NES,
+         p_rna = padj) |> 
+  dplyr::select(pathway, fc_rna, p_rna) |> 
+  left_join(res_atac) |> 
+  mutate(fc_atac = NES,
+         p_atac = padj,
+         direction = case_when(sign(fc_atac) == 1 & sign(fc_rna) == 1 ~ "up_atac_up_rna",
+                               sign(fc_atac) == 1 & sign(fc_rna) == -1 ~ "up_atac_down_rna",
+                               sign(fc_atac) == -1 & sign(fc_rna) == -1 ~ "down_atac_down_rna",
+                               sign(fc_atac) == -1 & sign(fc_rna) == 1 ~ "down_atac_up_rna"))
+
+combined |> 
+  subset(!is.na(p_atac)) |>
+  mutate(p_rna = -log10(p_rna) * sign(fc_rna),
+         p_atac = -log10(p_atac) * sign(fc_atac)) |> 
+  ggplot(aes(x = p_atac, y = p_rna)) +
+  geom_hline(yintercept = 0, color = "grey50") +
+  geom_vline(xintercept = 0, color = "grey50") +
+  geom_point(aes(color = direction), size = 3) +
+  geom_text_repel(aes(label = pathway), max.overlaps = 20, force = 10, size = 2.9) +
+  theme_bw() +
+  force_panelsizes(cols = unit(4, "in"),
+                   rows = unit(4, "in")) +
+  scale_x_continuous(limits = symmetric_limits) +
+  scale_y_continuous(limits = symmetric_limits) +
+  scale_color_manual(values = c("up_atac_up_rna" = "#1d4c6e",
+                                "down_atac_down_rna" = "grey70",
+                                "up_atac_down_rna" = "grey90",
+                                "down_atac_up_rna" = "grey90")) +
+  xlab("sign(FC) x -log10(p.adj) macrophages") +
+  ylab("sign(FC) x -log10(p.adj) CD14 Monocytes")
+
+ggsave("plots/consistent_circulation_monos_skin_macros.pdf", height = 6, width = 10)
+```
+
+```{r}
+gse_hm_skin <- read.csv("bocklab_skin_granuloma/gsea_allpws_skin.csv")
+gse_hm_allpws <- read.csv("RNA/gsea_allpws.csv")
+
+gse_hm_skin |> 
+  subset(celltype == "macrophage") |> 
+  subset(str_detect(pathway, "HALLMARK")) |> 
+  subset(padj < 0.05) |> 
+  pull(pathway) -> hallmarks
+
+gse_hm_skin |> 
+  subset(pathway %in% hallmarks) |> 
+  mutate(pathway = str_replace_all(pathway, "_", " ") |> str_remove("HALLMARK")) |> 
+  #subset(padj < 0.05) |> 
+  subset(celltype == "macrophage") |> 
+  mutate(nlog10p = -log10(padj) * sign(NES),
+         signif = padj < 0.05) |> 
+  arrange(nlog10p) -> tmp
+
+list(
+gse_hm_allpws |> 
+  subset(pathway %in% hallmarks) |> 
+  #subset(str_detect(pathway, "HALLMARK")) |> 
+  mutate(pathway = str_replace_all(pathway, "_", " ") |> str_remove("HALLMARK")) |> 
+  #subset(padj < 0.05) |> 
+  subset(celltype == "CD14_Mono") |> 
+  mutate(nlog10p = -log10(padj) * sign(NES),
+         signif = padj < 0.05) |> 
+  arrange(nlog10p) |> 
+  mutate(pathway = factor(pathway, levels = tmp$pathway)) |> 
+  ggplot(aes(x = nlog10p, y = pathway)) +
+  geom_vline(xintercept = 0, color = "black") +
+  geom_bar(stat = "summary", aes(fill = signif), color = "black") +
+  geom_vline(xintercept = c(log10(0.05), -log10(0.05)), linetype = 2) +
+  facet_wrap(~"CD14 monocyte") +
+  force_panelsizes(rows = unit(2.3, "in"),
+                   cols = unit(1.8, "in")) +
+  scale_x_continuous(expand = expansion(mult = c(0.05, 0.05)), limits = c(-13, 33)) +
+  xlab("-log10(p.adj) * sign(NES)") +
+  scale_fill_manual(values = c("FALSE" = "grey70",
+                               "TRUE" = "steelblue")) +
+  theme_bw() +
+  theme(axis.text = element_text(color = "black"),
+        axis.title.y = element_blank(),
+        axis.text.y = element_blank(),
+        axis.ticks.y = element_blank(),
+        legend.position = "none"),
+tmp |> 
+  mutate(pathway = factor(pathway, levels = tmp$pathway)) |> 
+  ggplot(aes(x = nlog10p, y = pathway)) +
+  geom_vline(xintercept = 0, color = "black") +
+  geom_bar(stat = "summary", aes(fill = signif), color = "black") +
+  geom_vline(xintercept = c(log10(0.05), -log10(0.05)), linetype = 2) +
+  facet_wrap(~"skin macrophages") +
+  force_panelsizes(rows = unit(2.3, "in"),
+                   cols = unit(1.8, "in")) +
+  scale_x_continuous(expand = expansion(mult = c(0.05, 0.05)), limits = c(-13, 33)) +
+  scale_y_discrete(position = "right") +
+  xlab("-log10(p.adj) * sign(NES)") +
+  scale_fill_manual(values = c("FALSE" = "grey70",
+                               "TRUE" = "steelblue")) +
+  theme_bw() +
+  theme(axis.text = element_text(color = "black"),
+        axis.title.y = element_blank(),
+        legend.position = "none")
+)-> plotlist
+
+
+ggarrange(plotlist = plotlist, nrow = 1, align = "h")
+
+ggsave("plots/Skin_Mph_GSEA.pdf", height = 7, width = 10)
+```
+
+```{r}
+gse_hm_skin <- read.csv("bocklab_skin_granuloma/gsea_allpws_skin.csv")
+gse_hm_allpws <- read.csv("RNA/gsea_allpws.csv")
+
+gse_hm_skin |> 
+  subset(celltype == "CD4_T") |> 
+  subset(str_detect(pathway, "HALLMARK")) |> 
+  subset(padj < 0.05) |> 
+  pull(pathway) -> hallmarks
+
+gse_hm_skin |> 
+  subset(pathway %in% hallmarks) |> 
+  mutate(pathway = str_replace_all(pathway, "_", " ") |> str_remove("HALLMARK")) |> 
+  #subset(padj < 0.05) |> 
+  subset(celltype == "CD4_T") |> 
+  mutate(nlog10p = -log10(padj) * sign(NES),
+         signif = padj < 0.05) |> 
+  arrange(nlog10p) -> tmp
+
+list(
+gse_hm_allpws |> 
+  subset(pathway %in% hallmarks) |> 
+  #subset(str_detect(pathway, "HALLMARK")) |> 
+  mutate(pathway = str_replace_all(pathway, "_", " ") |> str_remove("HALLMARK")) |> 
+  #subset(padj < 0.05) |> 
+  subset(celltype == "CD4_naive") |> 
+  mutate(nlog10p = -log10(padj) * sign(NES),
+         signif = padj < 0.05) |> 
+  arrange(nlog10p) |> 
+  mutate(pathway = factor(pathway, levels = tmp$pathway)) |> 
+  ggplot(aes(x = nlog10p, y = pathway)) +
+  geom_vline(xintercept = 0, color = "black") +
+  geom_bar(stat = "summary", aes(fill = signif), color = "black") +
+  geom_vline(xintercept = c(log10(0.05), -log10(0.05)), linetype = 2) +
+  scale_x_continuous(expand = expansion(mult = c(0.05, 0.05)), limits = c(-13, 33)) +
+  facet_wrap(~"CD4 naive") +
+  xlab("-log10(p.adj) * sign(NES)") +
+  scale_fill_manual(values = c("FALSE" = "grey70",
+                               "TRUE" = "steelblue")) +
+  theme_bw() +
+  theme(axis.text = element_text(color = "black"),
+        axis.title.y = element_blank(),
+        axis.text.y = element_blank(),
+        axis.ticks.y = element_blank(),
+        axis.title.x = element_blank(),
+        legend.position = "none") +
+  force_panelsizes(rows = unit(2.3, "in"),
+                   cols = unit(1.8, "in")),
+
+gse_hm_allpws |> 
+  subset(pathway %in% hallmarks) |> 
+  #subset(str_detect(pathway, "HALLMARK")) |> 
+  mutate(pathway = str_replace_all(pathway, "_", " ") |> str_remove("HALLMARK")) |> 
+  #subset(padj < 0.05) |> 
+  subset(celltype == "CD4_memory") |> 
+  mutate(nlog10p = -log10(padj) * sign(NES),
+         signif = padj < 0.05) |> 
+  arrange(nlog10p) |> 
+  mutate(pathway = factor(pathway, levels = tmp$pathway)) |> 
+  ggplot(aes(x = nlog10p, y = pathway)) +
+  geom_vline(xintercept = 0, color = "black") +
+  geom_bar(stat = "summary", aes(fill = signif), color = "black") +
+  geom_vline(xintercept = c(log10(0.05), -log10(0.05)), linetype = 2) +
+  scale_x_continuous(expand = expansion(mult = c(0.05, 0.05)), limits = c(-13, 33)) +
+  facet_wrap(~"CD4 memory") +
+  xlab("-log10(p.adj) * sign(NES)") +
+  scale_fill_manual(values = c("FALSE" = "grey70",
+                               "TRUE" = "steelblue")) +
+  theme_bw() +
+  theme(axis.text = element_text(color = "black"),
+        axis.title.y = element_blank(),
+        axis.text.y = element_blank(),
+        axis.ticks.y = element_blank(),
+        legend.position = "none") +
+  force_panelsizes(rows = unit(2.3, "in"),
+                   cols = unit(1.8, "in")),
+
+gse_hm_skin |> 
+  subset(pathway %in% hallmarks) |> 
+  #subset(str_detect(pathway, "HALLMARK")) |> 
+  mutate(pathway = str_replace_all(pathway, "_", " ") |> str_remove("HALLMARK")) |> 
+  #subset(padj < 0.05) |> 
+  subset(celltype == "CD4_T") |> 
+  mutate(nlog10p = -log10(padj) * sign(NES),
+         signif = padj < 0.05) |> 
+  arrange(nlog10p) |> 
+  mutate(pathway = factor(pathway, levels = tmp$pathway)) |> 
+  ggplot(aes(x = nlog10p, y = pathway)) +
+  geom_vline(xintercept = 0, color = "black") +
+  geom_bar(stat = "summary", aes(fill = signif), color = "black") +
+  geom_vline(xintercept = c(log10(0.05), -log10(0.05)), linetype = 2) +
+  scale_x_continuous(expand = expansion(mult = c(0.05, 0.05)), limits = c(-13, 33)) +
+  scale_y_discrete(position = "right") +
+  facet_wrap(~"skin CD4 T") +
+  xlab("-log10(p.adj) * sign(NES)") +
+  scale_fill_manual(values = c("FALSE" = "grey70",
+                               "TRUE" = "steelblue")) +
+  theme_bw() +
+  theme(axis.text = element_text(color = "black"),
+        axis.title.y = element_blank(),
+        axis.title.x = element_blank(),
+        legend.position = "none") +
+  force_panelsizes(rows = unit(2.3, "in"),
+                   cols = unit(1.8, "in"))
+)-> plotlist
+
+ggarrange(plotlist = plotlist, nrow = 1, align = "h")
+
+ggsave("plots/Skin_Pathway_GSEA_Tcells.pdf", height = 4, width = 14)
+```
+
+## bock lab skin data intro
+```{r}
+skin <- readRDS("bocklab_skin_granuloma/rna.rds")
+
+skin[[]] |> 
+  mutate(labels = case_when(cell_type == "Helper T-cells" ~ "CD4_T_cells",
+                            cell_type %in% c("Macrophage 1",
+                                             "Macrophage 2",
+                                             "Monocyte derived Macrophages") ~ "Macrophages",
+                            TRUE ~ "x"),
+         ) -> skin[[]]
+
+umap_df <- skin@reductions$umap.harmony@cell.embeddings |> 
+  as.data.frame() |> 
+  rownames_to_column("barcode") |> 
+  left_join(skin@meta.data |> rownames_to_column("barcode")) |> 
+  left_join(skin[["RNA"]]$data[rownames(skin[["RNA"]]$data) %in% c("ITGAM", "CD4", "CD3E", "CD1C", "CCR2", "CCR4", "CCR5", "MKI67"),] |>
+              t() |> as.data.frame() |>  rownames_to_column("barcode"))
+
+centroids <- umap_df |> 
+  group_by(labels) |> 
+  summarise(umapharmony_1 = median(umapharmony_1),
+            umapharmony_2 = median(umapharmony_2))
+
+umap_df |> 
+  mutate(labels = factor(labels, levels = c("x", "Macrophages", "CD4_T_cells")),
+         tissue = factor(tissue, levels = c("Non-lesional skin",
+                                            "Lesional skin"))) |> 
+  arrange(labels) |> 
+  # subset(cluster_names_pseudobulk %in% c("DC", "CD16_Mono", "CD14_Mono")) |> 
+ggplot(aes(x = umapharmony_1, y = umapharmony_2, color = labels, label = labels)) +
+  geom_point(size = 0.5, stroke = 0) |> ggrastr::rasterise(dpi = 600) +
+  geom_label(data = centroids, aes(label = labels), size = 3, color = "black") +
+  theme_bw() +
+  theme(axis.text = element_blank(),
+        panel.grid = element_blank(),
+        text = element_text(color = "black"),
+        axis.ticks = element_blank(), legend.title = element_blank(),
+        axis.title = element_text(vjust = 0, hjust = 0),
+        element_text(vjust = 0, hjust = 0),
+        legend.position = "none") +
+  ylab("UMAP2") +
+  xlab("UMAP1") +
+  scale_color_manual(values = c("x" = "grey80",
+                                "Macrophages" = "steelblue",
+                                "CD4_T_cells" = "darkcyan")) +
+  facet_wrap(~tissue) +
+  force_panelsizes(rows = unit(3, "in"),
+                   cols = unit(3, "in")) -> p1
+
+umap_df |> 
+  # subset(cluster_names_pseudobulk %in% c("DC", "CD16_Mono", "CD14_Mono")) |> 
+ggplot(aes(x = umapharmony_1, y = umapharmony_2, color = MKI67, label = labels)) +
+  geom_point(size = 0.8, alpha = 0.5, stroke = 0) |> ggrastr::rasterise(dpi = 600) +
+  theme_bw() +
+  theme(axis.text = element_blank(),
+        panel.grid = element_blank(),
+        text = element_text(color = "black"),
+        axis.ticks = element_blank(), legend.title = element_blank(),
+        axis.title = element_blank(),
+        legend.position = "none") +
+  ylab("UMAP2") +
+  xlab("UMAP1") +
+  # scale_x_continuous(limits = c(NA, -3.2)) +
+  facet_wrap(~tissue) +
+  force_panelsizes(rows = unit(1.5, "in"),
+                   cols = unit(1.5, "in")) +
+  scale_color_gradient2(mid = "grey95", high = "#F4511E", limits = c(0, 3))
+
+umap_df |> 
+  # subset(cluster_names_pseudobulk %in% c("DC", "CD16_Mono", "CD14_Mono")) |> 
+ggplot(aes(x = umapharmony_1, y = umapharmony_2, color = CD3E, label = labels)) +
+  geom_point(size = 0.8, alpha = 0.5, stroke = 0) |> ggrastr::rasterise(dpi = 600) +
+  theme_bw() +
+  theme(axis.text = element_blank(),
+        panel.grid = element_blank(),
+        text = element_text(color = "black"),
+        axis.ticks = element_blank(), legend.title = element_blank(),
+        axis.title = element_blank(),
+        legend.position = "none") +
+  ylab("UMAP2") +
+  xlab("UMAP1") +
+  # scale_x_continuous(limits = c(NA, -3.2)) +
+  facet_wrap(~"CD3E") +
+  force_panelsizes(rows = unit(1.5, "in"),
+                   cols = unit(1.5, "in")) +
+  scale_color_gradient2(mid = "grey95", high = "#F4511E", limits = c(0, 3)) +
+
+umap_df |> 
+  # subset(cluster_names_pseudobulk %in% c("DC", "CD16_Mono", "CD14_Mono")) |> 
+ggplot(aes(x = umapharmony_1, y = umapharmony_2, color = CD4, label = labels)) +
+  geom_point(size = 0.8, alpha = 0.5, stroke = 0) |> ggrastr::rasterise(dpi = 600) +
+  theme_bw() +
+  theme(axis.text = element_blank(),
+        panel.grid = element_blank(),
+        text = element_text(color = "black"),
+        axis.ticks = element_blank(), legend.title = element_blank(),
+        axis.title = element_blank(),
+        legend.position = "none") +
+  ylab("UMAP2") +
+  xlab("UMAP1") +
+  # scale_x_continuous(limits = c(NA, -3.2)) +
+  facet_wrap(~"CD4") +
+  force_panelsizes(rows = unit(1.5, "in"),
+                   cols = unit(1.5, "in")) +
+  scale_color_gradient2(mid = "grey95", high = "#F4511E", limits = c(0, 3)) +
+
+umap_df |> 
+  # subset(cluster_names_pseudobulk %in% c("DC", "CD16_Mono", "CD14_Mono")) |> 
+ggplot(aes(x = umapharmony_1, y = umapharmony_2, color = ITGAM, label = labels)) +
+  geom_point(size = 0.8, alpha = 0.5, stroke = 0) |> ggrastr::rasterise(dpi = 600) +
+  theme_bw() +
+  theme(axis.text = element_blank(),
+        panel.grid = element_blank(),
+        text = element_text(color = "black"),
+        axis.ticks = element_blank(), legend.title = element_blank(),
+        axis.title = element_text(vjust = 0, hjust = 0),
+        legend.position = "none") +
+  ylab("UMAP2") +
+  xlab("UMAP1") +
+  # scale_x_continuous(limits = c(NA, -3.2)) +
+  facet_wrap(~"ITGAM") +
+  force_panelsizes(rows = unit(1.5, "in"),
+                   cols = unit(1.5, "in")) +
+  scale_color_gradient2(mid = "grey95", high = "#F4511E", limits = c(0, 3)) +
+
+umap_df |> 
+  # subset(cluster_names_pseudobulk %in% c("DC", "CD16_Mono", "CD14_Mono")) |> 
+ggplot(aes(x = umapharmony_1, y = umapharmony_2, color = CD1C, label = labels)) +
+  geom_point(size = 0.8, alpha = 0.5, stroke = 0) |> ggrastr::rasterise(dpi = 600) +
+  theme_bw() +
+  theme(axis.text = element_blank(),
+        panel.grid = element_blank(),
+        text = element_text(color = "black"),
+        axis.ticks = element_blank(), legend.title = element_blank(),
+        axis.title = element_blank(),
+        legend.position = "none") +
+  ylab("UMAP2") +
+  xlab("UMAP1") +
+  # scale_x_continuous(limits = c(NA, -3.2)) +
+  facet_wrap(~"CD1C") +
+  force_panelsizes(rows = unit(1.5, "in"),
+                   cols = unit(1.5, "in")) +
+  scale_color_gradient2(mid = "grey95", high = "#F4511E", limits = c(0, 3)) -> p2
+
+ggarrange(p1, p2, ncol = 2)
+
+ggsave("plots/umap_skin.pdf", height = 8, width = 13)
+```
+
+## IFN related gene expression in BockLab skin data
+```{r}
+pseudobulk_skin <- readRDS("bocklab_skin_granuloma/pseudobulk_skin.rds")
+skin <- readRDS("bocklab_skin_granuloma/rna.rds")
+
+all_fc_skin <- read.csv("bocklab_skin_granuloma/all_fc_skin.csv")
+
+sample_info <- skin[[]] |>
+  dplyr::select(patient, tissue) |>
+  mutate(SampleID = paste0(patient, "_", tissue) |>
+           str_replace_all("-", "_") |> 
+           str_replace_all(" ", "_"),
+         tissue = case_when(tissue == "Non-lesional skin" ~ "Non-lesional",
+                            tissue == "Lesional skin" ~ "Lesional"),
+         tissue = factor(tissue, levels = c("Non-lesional", "Lesional"))) |> 
+  unique()
+
+pval <- read.csv("bocklab_skin_granuloma/all_fc_skin.csv") |> 
+  subset(gene == "IFNA2" & celltype == "CD4_T") |> 
+  mutate(group1 = "Non-lesional",
+         group2 = "Lesional",
+         padj = round(padj, digits = 4))
+
+all_fc_skin |> 
+  subset(str_detect(gene, "APOBEC3A")) |> 
+  subset(padj < 0.05) |> View()
+
+pseudobulk_skin$CD4_T |> 
+  counts(normalized = T) |> 
+  t() |> 
+  as.data.frame() |> 
+  select(`IFNA2`) |> 
+  rownames_to_column("SampleID") |> 
+  left_join(sample_info) |> 
+  ggplot(aes(x = tissue, y = IFNA2)) +
+  geom_boxplot(outliers = F, width = 0.7, aes(fill = tissue)) +
+  scale_y_continuous(expand = expansion(mult = c(0.1, 0.2)), limits = c(NA, NA)) +
+  geom_quasirandom(width = 0.2, color = "black") + 
+  scale_fill_manual(values = c("Non_lesional" = "grey70",
+                               "Lesional" = "#1d4c6e")) +
+  facet_wrap(~ "skin CD4 T\nIFNG") +
+  force_panelsizes(rows = unit(1.5, "in"),
+                   cols = unit(1.7, "in")) +
+  theme_bw() +
+  theme(axis.title.x = element_blank(),
+        legend.position = "none") +
+  stat_pvalue_manual(data = pval, label = "padj", y.position = 1500) +
+  ylab("normalized counts")
+
+
+all_fc_rna |> 
+  subset(gene == "CXCL10")
+
+all_fc_rna_ivg <- read.csv("RNA/all_fc_rna_ivg.csv")
+
+pval <- all_fc_rna |> 
+  subset(gene == "IFNG" & celltype == "CD4_memory") |> 
+  mutate(group1 = "healthy",
+         group2 = "sarcoidosis",
+         padj = round(padj, digits = 4))
+
+pseudobulk_rna$CD4_memory |> 
+  counts(normalized = T) |> 
+  t() |> 
+  as.data.frame() |> 
+  select(`IFNG`) |> 
+  rownames_to_column("SampleID") |> 
+  left_join(readxl::read_xlsx("250804_Sarcoidosis_patient_metadata.xlsx")) |>
+  ggplot(aes(x = state, y = IFNG)) +
+  geom_boxplot(outliers = F, width = 0.7, aes(fill = state)) +
+  scale_y_continuous(expand = expansion(mult = c(0.1, 0.2)), limits = c(NA, NA)) +
+  geom_quasirandom(width = 0.2, color = "black") + 
+  scale_fill_manual(values = c("healthy" = "grey70",
+                               "sarcoidosis" = "#1d4c6e")) +
+  facet_wrap(~ "CD4 memory\nIFNG") +
+  force_panelsizes(rows = unit(1.5, "in"),
+                   cols = unit(1.7, "in")) +
+  theme_bw() +
+  theme(axis.title.x = element_blank(),
+        legend.position = "none") +
+  stat_pvalue_manual(data = pval, label = "padj", y.position = 25) +
+  ylab("normalized counts") -> p2
+
+pval <- all_fc_rna |> 
+  subset(gene == "IFNG" & celltype == "CD4_naive") |> 
+  mutate(group1 = "healthy",
+         group2 = "sarcoidosis",
+         padj = round(padj, digits = 4))
+
+
+pseudobulk_rna$CD4_naive |> 
+  counts(normalized = T) |> 
+  t() |> 
+  as.data.frame() |> 
+  select(`IFNG`) |> 
+  rownames_to_column("SampleID") |> 
+  left_join(readxl::read_xlsx("250804_Sarcoidosis_patient_metadata.xlsx")) |>
+  ggplot(aes(x = state, y = IFNG)) +
+  geom_boxplot(outliers = F, width = 0.7, aes(fill = state)) +
+  scale_y_continuous(expand = expansion(mult = c(0.1, 0.1)), limits = c(NA, NA)) +
+  geom_quasirandom(width = 0.2, color = "black") + 
+  scale_fill_manual(values = c("healthy" = "grey70",
+                               "sarcoidosis" = "#1d4c6e")) +
+  facet_wrap(~ "CD4 naive\nIFNG") +
+  force_panelsizes(rows = unit(1.5, "in"),
+                   cols = unit(1.7, "in")) +
+  theme_bw() +
+  theme(axis.title.x = element_blank(),
+        legend.position = "none") +
+  stat_pvalue_manual(data = pval, label = "padj", y.position = 25) +
+  ylab("normalized counts") -> p1
+
+ggarrange(p1,p2, p3, align = "h", nrow = 1)
+
+ggsave("CD4_Tcell_IFNG.pdf", height = 3, width = 7)
+```

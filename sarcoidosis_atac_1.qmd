@@ -1,0 +1,809 @@
+---
+title: "Sarcoidosis_snATAC"
+format: html
+editor: source
+---
+
+Install packages and check downloaded files
+
+# scAVENGERs genotype demux
+#### Install scAVENGERS and run it for genotype demux of each pool
+```{bash, eval = F}
+wget https://github.com/kaistcbfg/scAVENGERS/archive/refs/tags/v1.0.0.tar.gz
+
+tar -xvzf v1.0.0.tar.gz
+
+conda env create -f scAVENGERS-1.0.0/envs/environment.yml
+
+wget https://ftp.ebi.ac.uk/pub/databases/gencode/Gencode_human/release_47/GRCh38.primary_assembly.genome.fa.gz
+
+gunzip GRCh38.primary_assembly.genome.fa.gz
+
+conda activate scavengers
+mkdir ~/outdir
+conda install samtools
+
+samtools faidx GRCh38.primary_assembly.genome.fa
+
+# Modified ~/scAVENGERS-1.0.0/scripts/get_programs.sh. Added PATH=$PATH:/home/titus.schluter@mydre.org/miniconda3/envs/scavengers/bin
+# Modified ~/scAVENGERS-1.0.0/snakefile. Changed vcftools in line 49 to bcftools
+```
+
+#### Example of config.yaml used for demultiplexing
+```{bash, eval = F}
+# number of threads to use
+# to make this valid, you must set the number of cores when running snakemake pipeline.
+# e.g. -j 10
+THREADS: 24
+
+# input and output data path
+DATA:
+  # path to directory for saving output files
+  out_dir:
+    /home/titus.schluter@mydre.org/outdir
+  # path to genome sequence file
+  genome:
+    /home/titus.schluter@mydre.org/GRCh38.primary_assembly.genome.fa
+  # path to alignment file
+  alignment:
+    /home/titus.schluter@mydre.org/202403108b_3-2_count/outs/possorted_bam.bam
+  # path to text file containing line-seperated list of barcodes
+  barcode:
+    /home/titus.schluter@mydre.org/202403108b_3-2_count/outs/filtered_peak_bc_matrix/barcodes.tsv
+
+# cluster.py settings
+CLUSTER:
+  # number of genotypes in multiplexed sample
+  n_genotypes: 4
+  # ploidy of the organism of interest
+  ploidy: 2
+  # error rate correction parameter of probability model
+  err_rate: 0.001
+  # difference of likelihood to stop the iteration
+  stop_criterion: 0.1
+  # maximum number of iteration
+  max_iter: 1000
+
+# variant caller settings
+VARIANT_CALLER:
+  # variant caller to use. Choose "freebayes" or "strelka."
+  caller: "freebayes"
+  # minimum quality score of variant, used only if the caller is "freebayes"
+  min_qual: 0
+  # whether to use low-GQX variants only, used only if the caller is "strelka"
+  lowgqx: False
+
+# vartrix settings
+VARTRIX:
+  # minimum mapping quality of read to use in vartrix
+  mapq: 30
+
+# troublet settings
+TROUBLET:
+  # doublet prior
+  doublet_prior: 0.5
+  # doublet posterior threshold
+  doublet_threshold: 0.9
+  # singlet posterior threshold
+  singlet_threshold: 0.9
+```
+
+#### running scavengers
+```{bash, eval = F}
+~/scAVENGERS-1.0.0/scAVENGERS pipeline --configfile ~/scAVENGERS-1.0.0/config.yaml -j $THREADS
+```
+
+#### checking relatedness of genotyped individuals and scAVENGERS clusters
+
+after demultiplexing, we compare the cluster_genotypes.vcf for relatedness with genotyped individuals
+
+```{bash, eval = F}
+# Preparing conda environment for plink and bcftools.
+# This has already been done
+conda deactivate
+conda config --add channels bioconda
+conda config --add channels conda-forge
+conda config --set channel_priority strict
+conda create -n plink
+conda activate plink
+conda install plink
+conda install bcftools
+```
+
+```{bash}
+# Activate conda environment.
+conda activate plink
+
+export WORKING_DIR=/mnt/data/2_Users/Titus_Schluter/sarcoidosis_atac
+
+# Preparing genotype files for each pool.
+for Pool in pool_1 pool_2_1 pool_2_2 pool_3_1 pool_3_2
+do
+# Creating genotype directory.
+rm -r $WORKING_DIR/scAVENGERS/$Pool/genotypes
+mkdir $WORKING_DIR/scAVENGERS/$Pool/genotypes
+
+# Updating sample IDs in cluster genotypes file.
+touch $WORKING_DIR/scAVENGERS/$Pool/genotypes/new_sample_ids.txt
+echo cluster0 >> $WORKING_DIR/scAVENGERS/$Pool/genotypes/new_sample_ids.txt
+echo cluster1 >> $WORKING_DIR/scAVENGERS/$Pool/genotypes/new_sample_ids.txt
+echo cluster2 >> $WORKING_DIR/scAVENGERS/$Pool/genotypes/new_sample_ids.txt
+echo cluster3 >> $WORKING_DIR/scAVENGERS/$Pool/genotypes/new_sample_ids.txt
+
+bcftools reheader --samples $WORKING_DIR/scAVENGERS/$Pool/genotypes/new_sample_ids.txt -o $WORKING_DIR/scAVENGERS/$Pool/genotypes/cluster_genotypes2.vcf $WORKING_DIR/scAVENGERS/$Pool/cluster_genotypes.vcf
+
+# Converting to plink format.
+plink --vcf $WORKING_DIR/scAVENGERS/$Pool/genotypes/cluster_genotypes2.vcf --allow-extra-chr --set-missing-var-ids @_#_\$1_\$2 --chr 1-25 --make-bed --out $WORKING_DIR/scAVENGERS/$Pool/genotypes/cluster_genotypes2
+done
+```
+
+```{r}
+# Identifying overlapping variants between actual genotypes and cluster genotypes.
+for(Pool in c("pool_1", "pool_2_1", "pool_2_2", "pool_3_1", "pool_3_2")) {
+  # Reading in cluster genotypes file.
+  cluster_geno_bim <- read_delim(paste0("scAVENGERS/", Pool, "/genotypes/cluster_genotypes2.bim"), delim = "\t", col_names = F)
+  
+  # Reading in lifted actual genotypes.
+  actual_geno_bim2 <- read_delim("/mnt/data/2_Users/Nicholas_Sumpter/Genotypes_April_2025/For_scAVENGERS/actual_geno_lifted.bim", delim = "\t", col_names = F)
+  
+  # Finding overlap of SNPs using only chromosome, position, a1, and a2 (not bothering with flipped alleles or strand switches for now).
+  overlap_snps <- actual_geno_bim2 |> 
+    inner_join(cluster_geno_bim, by = c("X1", "X4", "X5", "X6")) |> 
+    mutate(CHR_BP_A1_A2 = paste(X1, X4, X5, X6, sep = "_"))
+  
+  # Excluding duplicated sites.
+  tmp <- overlap_snps |> 
+    filter(duplicated(CHR_BP_A1_A2) | duplicated(CHR_BP_A1_A2, fromLast = T))
+  
+  overlap_snps_dedup <- overlap_snps |> 
+    filter(!CHR_BP_A1_A2 %in% tmp$CHR_BP_A1_A2)
+  
+  # Filtering to keep overlapped SNPs.
+  cluster_geno_bim_overlap <- cluster_geno_bim |> 
+    mutate(CHR_BP_A1_A2 = paste(X1, X4, X5, X6, sep = "_")) |> 
+    filter(CHR_BP_A1_A2 %in% overlap_snps_dedup$CHR_BP_A1_A2)
+  
+  actual_geno_bim2_overlap <- actual_geno_bim2 |> 
+    mutate(CHR_BP_A1_A2 = paste(X1, X4, X5, X6, sep = "_")) |> 
+    filter(CHR_BP_A1_A2 %in% overlap_snps_dedup$CHR_BP_A1_A2)
+  
+  write_delim(cluster_geno_bim_overlap |> select(X2), paste0("scAVENGERS/", Pool, "/genotypes/cluster_geno_overlap_snps.txt"), delim = "\t", col_names = F)
+  
+  write_delim(actual_geno_bim2_overlap |> select(X2), paste0("scAVENGERS/", Pool, "/genotypes/actual_geno2_overlap_snps.txt"), delim = "\t", col_names = F)
+  
+  rm(actual_geno_bim2, cluster_geno_bim, overlap_snps, overlap_snps_dedup, tmp)
+}
+
+rm(Pool, cluster_geno_bim_overlap, actual_geno_bim2_overlap)
+```
+
+```{bash, eval = F}
+# Extracting overlap SNPs from each file.
+for Pool in pool_1 pool_2_1 pool_2_2 pool_3_1 pool_3_2
+do
+plink --bfile /mnt/data/2_Users/Nicholas_Sumpter/Genotypes_April_2025/For_scAVENGERS/actual_geno_lifted --extract $WORKING_DIR/scAVENGERS/$Pool/genotypes/actual_geno2_overlap_snps.txt --make-bed --out $WORKING_DIR/scAVENGERS/$Pool/genotypes/actual_geno_overlap
+
+plink --bfile $WORKING_DIR/scAVENGERS/$Pool/genotypes/cluster_genotypes2 --extract $WORKING_DIR/scAVENGERS/$Pool/genotypes/cluster_geno_overlap_snps.txt --make-bed --out $WORKING_DIR/scAVENGERS/$Pool/genotypes/cluster_geno_overlap
+done
+```
+
+```{r}
+# Creating bim files with corrected names for merging and creating fam files with singular family IDs.
+for(Pool in c("pool_1", "pool_2_1", "pool_2_2", "pool_3_1", "pool_3_2")) {
+  # Creating bim files with corrected names for merging.
+  actual_geno_bim2_overlap <- read_delim(paste0("scAVENGERS/", Pool, "/genotypes/actual_geno_overlap.bim"), delim = "\t", col_names = F) |> 
+    mutate(CHR_BP_A1_A2 = paste(X1, X4, X5, X6, sep = "_"))
+  
+  cluster_geno_bim_overlap <- read_delim(paste0("scAVENGERS/", Pool, "/genotypes/cluster_geno_overlap.bim"), delim = "\t", col_names = F) |> 
+    mutate(CHR_BP_A1_A2 = paste(X1, X4, X5, X6, sep = "_"))
+  
+  write_delim(actual_geno_bim2_overlap |> select(X1, CHR_BP_A1_A2, X3:X6), paste0("scAVENGERS/", Pool, "/genotypes/actual_geno_formerge.bim"), delim = "\t", col_names = F)
+  
+  write_delim(cluster_geno_bim_overlap |> select(X1, CHR_BP_A1_A2, X3:X6), paste0("scAVENGERS/", Pool, "/genotypes/cluster_geno_formerge.bim"), delim = "\t", col_names = F)
+  
+  # Creating fam files with 1 family ID.
+  actual_geno_fam <- read_delim(paste0("scAVENGERS/", Pool, "/genotypes/actual_geno_overlap.fam"), col_names = F) |> 
+    mutate(X1 = 0)
+  
+  cluster_geno_fam <- read_delim(paste0("scAVENGERS/", Pool, "/genotypes/cluster_geno_overlap.fam"), col_names = F) |> 
+    mutate(X1 = 0)
+  
+  write_delim(actual_geno_fam, paste0("scAVENGERS/", Pool, "/genotypes/actual_geno_formerge.fam"), delim = " ", col_names = F)
+  
+  write_delim(cluster_geno_fam, paste0("scAVENGERS/", Pool, "/genotypes/cluster_geno_formerge.fam"), delim = " ", col_names = F)
+  
+  rm(cluster_geno_fam, actual_geno_fam, actual_geno_bim2_overlap, cluster_geno_bim_overlap)
+}
+
+rm(Pool)
+```
+
+```{bash, eval = F}
+# Merging files and calculating relatedness.
+for Pool in pool_1 pool_2_1 pool_2_2 pool_3_1 pool_3_2
+do
+# Copying bed files.
+cp $WORKING_DIR/scAVENGERS/$Pool/genotypes/actual_geno_overlap.bed $WORKING_DIR/scAVENGERS/$Pool/genotypes/actual_geno_formerge.bed
+cp $WORKING_DIR/scAVENGERS/$Pool/genotypes/cluster_geno_overlap.bed $WORKING_DIR/scAVENGERS/$Pool/genotypes/cluster_geno_formerge.bed
+
+# Merging files.
+plink --bfile $WORKING_DIR/scAVENGERS/$Pool/genotypes/cluster_geno_formerge --bmerge $WORKING_DIR/scAVENGERS/$Pool/genotypes/actual_geno_formerge --make-bed --out $WORKING_DIR/scAVENGERS/$Pool/genotypes/merge_geno
+
+# Preparing independent SNPs for genome relatedness.
+plink --bfile $WORKING_DIR/scAVENGERS/$Pool/genotypes/merge_geno --indep 50 5 2 --out $WORKING_DIR/scAVENGERS/$Pool/genotypes/merge_geno
+
+plink --bfile $WORKING_DIR/scAVENGERS/$Pool/genotypes/merge_geno --extract $WORKING_DIR/scAVENGERS/$Pool/genotypes/merge_geno.prune.in --make-bed --out $WORKING_DIR/scAVENGERS/$Pool/genotypes/merge_geno2
+
+# Running plink genome tool.
+plink --bfile $WORKING_DIR/scAVENGERS/$Pool/genotypes/merge_geno2 --genome --out $WORKING_DIR/scAVENGERS/$Pool/genotypes/merge_geno_plinkgenome
+done
+```
+
+#### Matching scavengers clusters to genotypes
+```{r}
+# Loading in resulting plink genome files.
+plink_rel <- read_table("scAVENGERS/pool_1/genotypes/merge_geno_plinkgenome.genome") |> 
+  mutate(Pool = "") |> 
+  slice(0)
+
+for(Pool in c("pool_1", "pool_2_1", "pool_2_2", "pool_3_1", "pool_3_2")) {
+  tmp <- read_table(paste0("scAVENGERS/", Pool, "/genotypes/merge_geno_plinkgenome.genome")) |> 
+    mutate(Pool = Pool)
+  
+  plink_rel <- rbind(plink_rel, tmp)
+}
+
+plink_rel <- plink_rel |> 
+  #filter(str_detect(IID1, "Pat|cluster") & str_detect(IID2, "Pat|cluster")) |> 
+  mutate(PI_HAT = as.numeric(PI_HAT)) |> 
+  subset(PI_HAT > 0.3) |> 
+  select(Pool, IID1, IID2, PI_HAT, RATIO)
+
+rm(tmp, Pool)
+```
+
+# R setup
+```{r}
+library(ggpmisc)
+library(msigdbr)
+library(ggrepel)
+library(ggh4x)
+library(harmony)
+library(JASPAR2020)
+library(TFBSTools)
+library(DESeq2)
+library(motifmatchr)
+library(BSgenome.Hsapiens.UCSC.hg38)
+library(clusterProfiler)
+library(ggpubr)
+library(pheatmap)
+library(ggbeeswarm)
+library(AnnotationHub)
+library(GenomicRanges)
+library(Seurat)
+library(Signac)
+library(org.Hs.eg.db)
+library(tidyverse)
+
+setwd("/mnt/data/2_Users/Titus_Schluter/sarcoidosis_atac/")
+```
+
+
+```{r}
+#sarc_atac_integrated <- readRDS("sarc_atac_integrated.rds")
+#sarc_atac_pctopic <- readRDS("sarc_atac_pctopic.rds")
+```
+
+```{r}
+DefaultAssay(sarc_atac_integrated)
+
+sarc_atac_integrated$test <- factor(sarc_atac_integrated$cluster_names_pseudobulk, levels = c("CD14_Mono",
+                                                                                              "CD16_Mono",
+                                                                                              "DC",
+                                                                                              "pDC",
+                                                                                              "CD4_naive",
+                                                                                              "CD4_memory",
+                                                                                              "Treg",
+                                                                                              "CD8_naive",
+                                                                                              "CD8_memory",
+                                                                                              "MAIT",
+                                                                                              "NKT_like",
+                                                                                              "NK",
+                                                                                              "early_NK",
+                                                                                              "B_naive",
+                                                                                              "B_memory") |> rev())
+
+Idents(sarc_atac_integrated) <- "test"
+
+DotPlot(sarc_atac_integrated |> subset(cluster_names_pseudobulk != "excl"),
+        features = c("CD33",
+                     "ITGAM",
+                     "CD14",
+                     "ITGAX",
+                     "FCGR3A",
+                     "CD1C",
+                     "IL3RA",
+                     "CD3E",
+                     "CD4",
+                     "CCR7",
+                     "CD69",
+                     "CD27",
+                     "IL7R",
+                     "CCR4",
+                     "IL2RA",
+                     "FOXP3",
+                     "CD8A",
+                     "CCL5",
+                     "KLRB1",
+                     "NCAM1",
+                     "CD19",
+                     "MS4A1",
+                     "IGHD",
+                     "IGHM"),
+        cluster.idents = F) +
+  scale_color_gradient2(low = "#6fa8dc", mid = "grey90", high = "#e06666") +
+  scale_radius(limits = c(0, 100)) +
+  theme_bw() +
+  theme(axis.title.x = element_blank(),
+        axis.title.y = element_blank(),
+        axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1),
+        panel.grid = element_blank()) +
+  force_panelsizes(rows = unit(3.5 , "in"),
+                   cols = unit(5 * 22/24, "in"))
+
+ggsave("celltype_annotation_atac.pdf", height = 8, width = 16)
+```
+
+For Signac I need to merge multiple objects and unify peaks. Peaks were initially called by cellranger and are different for each experiment. In this chunk, first peaks are unified and then based on the fragments files new count matrices are generated. From count matrices and fragments files separate seurat objects are generated which all contain the same features. Then, seurat objects can be merged.
+
+# Find Consensus peaks and combine data
+```{r}
+gr <- GRanges(seqnames = "chr1", ranges = IRanges(start = c(20, 70, 300), end = c(120, 200, 400)))
+gr
+
+experiments <- list.files("raw_data/unzipped/")
+
+peaks <- lapply(experiments, function(exp){
+  read.table(paste0("raw_data/unzipped/", exp, "/outs/peaks.bed"),
+             col.names = c("chr", "start", "end"))
+})
+
+peaks.gr <- lapply(peaks, function(exp){
+  makeGRangesFromDataFrame(exp)
+})
+
+combined.peaks <- GenomicRanges::reduce(x = c(peaks.gr[[1]],
+                               peaks.gr[[2]],
+                               peaks.gr[[3]],
+                               peaks.gr[[4]],
+                               peaks.gr[[5]]))
+
+peakwidths <- width(combined.peaks)
+peakwidths |> hist()
+
+width(peaks.gr[[1]]) |> hist()
+
+metadata <- lapply(experiments, function(exp){
+  md <- read.table(file = paste0("raw_data/unzipped/", exp, "/outs/singlecell.csv"),
+             stringsAsFactors = F,
+             sep = ",",
+             header = T,
+             row.names = 1)[-1, ] |> 
+    mutate(exp.name = exp,
+           pool = case_when(exp.name == "202403108_1_count" ~ "pool_1",
+                            exp.name == "202403108a_1_count" ~ "pool_2_1",
+                            exp.name == "202403108a_2_count" ~ "pool_2_2",
+                            exp.name == "202403108b_3-1_count" ~ "pool_3_1",
+                            exp.name == "202403108b_3-2_count" ~ "pool_3_2"))
+  md$cellID <- rownames(md)
+  return(md)
+})
+
+fragment_files <- lapply(experiments, function(exp){
+  cells <- read.table(paste0("raw_data/unzipped/", exp, "/outs/filtered_peak_bc_matrix/barcodes.tsv.gz"), header = F)
+  cells <- cells$V1
+  CreateFragmentObject(path = paste0("raw_data/unzipped/", exp, "/outs/fragments.tsv.gz"),
+                       cells = cells)
+})
+
+counts <- list()
+
+for (i in 1:length(experiments)){
+  cells <- read.table(paste0("raw_data/unzipped/", experiments[i], "/outs/filtered_peak_bc_matrix/barcodes.tsv.gz"), header = F)
+  cells <- cells$V1
+  counts[i] <- FeatureMatrix(fragments = fragment_files[i],
+                features = combined.peaks,
+                cells = cells)
+}
+
+#write_rds(counts, "signac_counts.rds")
+
+chrom_assays <- list()
+
+for (i in 1:length(experiments)){
+  chrom_assays[i] <- CreateChromatinAssay(counts[[i]],
+                                          fragments = fragment_files[[i]])
+}
+
+seurat_objects <- list()
+
+for (i in 1:length(experiments)){
+  seurat_objects[[i]] <- CreateSeuratObject(chrom_assays[[i]],
+                                          assay = "ATAC",
+                                          meta.data = metadata[[i]])
+}
+
+sarc_atac <- merge(x = seurat_objects[[1]], y = seurat_objects[2:length(seurat_objects)])
+sarc_atac
+#write_rds(sarc_atac, "sarc_atac.rds")
+```
+
+Filtering and annotating features
+```{r}
+# Filtering peaks on chromosome scaffolds and non standard chromosomes
+peaks.keep <- seqnames(granges(sarc_atac)) %in% standardChromosomes(granges(sarc_atac))
+sarc_atac <- sarc_atac[as.vector(peaks.keep),]
+
+ah <- AnnotationHub()
+
+query(ah, "EnsDb.Hsapiens.v98")
+
+ensdb_v98 <- ah[["AH75011"]]
+
+annotations <- GetGRangesFromEnsDb(ensdb = ensdb_v98)
+
+seqlevels(annotations) <- paste0("chr", seqlevels(annotations))
+genome(annotations) <- "hg38"
+
+Annotation(sarc_atac) <- annotations
+```
+
+```{r}
+sarc_atac <- NucleosomeSignal(sarc_atac)
+sarc_atac <- TSSEnrichment(sarc_atac)
+
+sarc_atac$pct_reads_in_peaks <- sarc_atac$peak_region_fragments / sarc_atac$passed_filters
+
+sarc_atac$blacklist_ratio <- FractionCountsInRegion(sarc_atac,
+                                                    assay = "ATAC",
+                                                    regions = blacklist_hg38_unified)
+
+sarc_atac$logCount_ATAC <- log10(sarc_atac$nCount_ATAC)
+sarc_atac$logFeature_ATAC <- log10(sarc_atac$nFeature_ATAC)
+```
+
+### assign cell barcodes to demultiplexed clusters and add metadata
+```{r}
+pools = c("pool_1", "pool_2_1", "pool_2_2", "pool_3_1", "pool_3_2")
+
+assignments <- lapply(pools, function(pool){
+  read.table(paste0(pool, "_outdir/clusters.final.tsv"), header = T) |> 
+    mutate(pool = pool)
+}) |> 
+  bind_rows() |> 
+  select(barcode, status, assignment, pool) |> 
+  mutate(pool_barcode = paste0(pool, "_", barcode),
+         cluster = case_when(status == "singlet" ~ paste0("cluster", assignment),
+                             status == "doublet" ~ "doublet"),
+         pool_cluster = case_when(status == "singlet" ~ paste0(pool, "_", cluster),
+                                  status == "doublet" ~ "doublet"))
+```
+
+### QC and filtering
+```{r}
+DensityScatter(sarc_atac, x = "nCount_ATAC", "TSS.enrichment", log_x = T, quantiles = T)
+
+VlnPlot(sarc_atac, features = c("nCount_ATAC"), pt.size = 0, group.by = "pool") +
+  geom_hline(aes(yintercept = 5000))
+ggsave("output/qc_nCount_ATAC.pdf", height = 4, width = 7)
+VlnPlot(sarc_atac, features = c("TSS.enrichment"), pt.size = 0, group.by = "pool") +
+  geom_hline(aes(yintercept = 4))
+ggsave("output/qc_TSS_enrichment.pdf", height = 4, width = 7)
+VlnPlot(sarc_atac, features = c("blacklist_ratio"), pt.size = 0, group.by = "pool") +
+  geom_hline(aes(yintercept = 0.005))
+ggsave("output/qc_blacklist_ratio.pdf", height = 4, width = 7)
+VlnPlot(sarc_atac, features = c("nucleosome_signal"), pt.size = 0, group.by = "pool") +
+  geom_hline(aes(yintercept = 3))
+ggsave("output/qc_nucleosome_signal.pdf", height = 4, width = 7)
+VlnPlot(sarc_atac, features = c("pct_reads_in_peaks"), pt.size = 0, group.by = "pool") +
+  geom_hline(aes(yintercept = 0.4))
+ggsave("output/qc_pct_reads_in_peaks.pdf", height = 4, width = 7)
+
+FragmentHistogram(sarc_atac_filtered, group.by = "pool")
+ggsave("output/fragment_sizes.pdf", height =4, width =7)
+
+# write_rds(sarc_atac, "sarc_atac_filtered.rds")
+
+sarc_atac_filtered <- sarc_atac |> 
+  subset(nCount_ATAC > 5000) |> 
+  subset(TSS.enrichment > 4) |>
+  subset(blacklist_ratio < 0.005) |> 
+  subset(nucleosome_signal < 3) |> 
+  subset(pct_reads_in_peaks > 0.4) |> 
+  subset(status != "doublet") |> 
+  subset(status != "unassigned")
+
+ncol(sarc_atac)
+ncol(sarc_atac_filtered)
+```
+
+### linear dimensional reduction
+```{r}
+sarc_atac_filtered <- RunTFIDF(sarc_atac_filtered)
+sarc_atac_filtered <- FindTopFeatures(sarc_atac_filtered)
+sarc_atac_filtered <- RunSVD(sarc_atac_filtered)
+
+# in SVD dimensional reduction the first LSI often correlates strongly with sequencing depth as a technical artifact and should be excluded from downstream nonlinear dimensional reduction.
+DepthCor(sarc_atac_filtered)
+ggsave("output/depth_correlation_lsi.pdf", height = 4, width = 7)
+ElbowPlot(sarc_atac_filtered, reduction = "lsi")
+ggsave("output/elbow_plot_lsi.pdf", height = 4, width = 7)
+```
+
+### UMAP and harmony integration
+```{r}
+sarc_atac_filtered <- RunUMAP(sarc_atac_filtered, reduction = "lsi", dims = 2:20)
+DimPlot(sarc_atac_filtered, group.by = "Patient")
+DimPlot(sarc_atac_filtered, group.by = "pool")
+
+sarc_atac_filtered[["ATAC_v5"]] <- sarc_atac_filtered[["ATAC"]]
+DefaultAssay(sarc_atac_filtered) <- "ATAC_v5"
+
+sarc_atac_filtered[["ATAC_v5"]] <- split(sarc_atac_filtered[["ATAC_v5"]], f = sarc_atac_filtered$Patient)
+
+sarc_atac_integrated <- IntegrateLayers(sarc_atac_filtered,
+                                        method = HarmonyIntegration,
+                                        orig.reduction = "lsi",
+                                        new.reduction = "harmony")
+
+sarc_atac_integrated <- RunUMAP(sarc_atac_integrated,
+                              reduction = "harmony",
+                              dims = 2:20,
+                              reduction.name = "umap.harmony")
+
+#write_rds(sarc_atac_filtered, "sarc_atac_integrated.rds")
+```
+
+### Clustering
+```{r}
+DefaultAssay(sarc_atac_integrated) <- "ATAC"
+sarc_atac_integrated <- FindNeighbors(sarc_atac_integrated, reduction = "harmony", dims = 2:20)
+sarc_atac_integrated <- FindClusters(sarc_atac_integrated, resolution = 1, cluster.name = "clusters.1.harmony")
+
+
+DimPlot(sarc_atac_integrated, reduction = "umap.harmony", group.by = "clusters.1.harmony")
+#write_rds(sarc_atac_integrated, "sarc_atac_integrated.rds")
+DefaultAssay(sarc_atac_integrated) <- "ATAC_v5"
+```
+
+### Gene activity inference
+```{r}
+DefaultAssay(sarc_atac_integrated) <- "ATAC"
+gene.activity <- GeneActivity(sarc_atac_integrated)
+
+sarc_atac_integrated[["iRNA"]] <- CreateAssayObject(gene.activity)
+
+sarc_atac_integrated <- NormalizeData(sarc_atac_integrated, assay = "iRNA")
+# write_rds(sarc_atac_integrated, "sarc_atac_integrated.rds")
+```
+
+### transfer labels from RNA data
+```{r}
+sarc_rna <- readRDS("/mnt/data/2_Users/Titus_Schluter/sarcoidosis_rna/sarcoidosis_integrated.rds")
+
+DefaultAssay(sarc_atac_integrated) <- "iRNA"
+
+FeaturePlot(sarc_atac_integrated, features = "CD3D", reduction = "umap.harmony")
+
+transfer.anchors <- FindTransferAnchors(reference = sarc_rna,
+                                        query = sarc_atac_integrated,
+                                        reduction = "cca")
+
+predicted.labels <- TransferData(anchorset = transfer.anchors,
+                                 refdata = sarc_rna$cluster_names_pseudobulk,
+                                 weight.reduction = sarc_atac_integrated[["harmony"]],
+                                 dims = 2:20)
+```
+
+```{r}
+metadata <- predicted.labels |>
+select(predicted.id) |> 
+  cbind(sarc_atac_integrated@meta.data)
+
+sarc_atac_integrated@meta.data <- metadata
+
+DimPlot(object = sarc_atac_integrated, 
+              reduction = "umap.harmony", group.by = "predicted.id",
+              label = TRUE,
+              label.size = 3,
+              raster = F) + NoLegend()
+```
+
+### label clusters based on label transfer
+```{r}
+# Labeling our clusters based on Azimuth labels.
+Idents(sarc_atac_integrated) <- sarc_atac_integrated$clusters.1.harmony
+
+tmp <- tibble(Var1 = "",
+              Freq = 0,
+              cluster_id = 0) |> 
+  slice(-1)
+
+for(i in unique(sarc_atac_integrated$clusters.1.harmony)) {
+  tmp1 <- table(sarc_atac_integrated@meta.data |> 
+                  filter(clusters.1.harmony == i) |>
+                  pull(predicted.id)) |>
+    as.data.frame() |>
+    mutate(cluster_id = i)
+  tmp <- rbind(tmp, tmp1)
+}
+
+tmp <- tmp |> 
+  select(Cluster_ID = cluster_id, predicted.id = Var1, Freq) |> 
+  mutate(Cluster_ID = as.integer(Cluster_ID)) |> 
+  arrange(Cluster_ID, desc(Freq))
+
+tmp2 <- tmp |> 
+  group_by(Cluster_ID) |> 
+  summarize(N = sum(Freq))
+
+tmp3 <- tmp |> 
+  left_join(tmp2) |> 
+  mutate(Percent = (Freq / N) * 100) |> 
+  filter(Percent > 20)
+
+tmp4 <- tmp3 |> 
+  select(Cluster_ID, predicted.id) |> 
+  group_by(Cluster_ID) |> 
+  summarise(cluster_names1 = paste(predicted.id, collapse = "/")) |> 
+  mutate(cluster_names1 = make.unique(cluster_names1, sep = " "),
+         cluster_names1 = factor(cluster_names1),
+         Cluster_ID = factor(Cluster_ID))
+
+sarc_atac_integrated@meta.data <- sarc_atac_integrated@meta.data |> 
+  rownames_to_column("cell") |> 
+  #select(-c(cluster_names1.x)) |> 
+  left_join(tmp4, by = c("clusters.1.harmony" = "Cluster_ID")) |> 
+  as.data.frame() |> 
+  column_to_rownames("cell")
+
+# sarc_atac_integrated@meta.data <- sarc_atac_integrated@meta.data |>
+#   select(-c(cluster_names1.x, cluster_names1.y, cluster_names1.y.y))
+```
+
+```{r}
+Idents(sarc_atac_integrated) <- sarc_atac_integrated$clusters.1.harmony
+p1 <- DimPlot(object = sarc_atac_integrated, 
+              reduction = "umap.harmony", 
+              label = TRUE,
+              label.size = 3,
+              raster = F) + NoLegend()
+
+p3 <- DimPlot(object = sarc_atac_integrated, 
+              reduction = "umap.harmony", 
+              label = TRUE,
+              label.size = 3, group.by = "predicted.id",
+              raster = F) + NoLegend()
+
+p4 <- DimPlot(object = sarc_atac_integrated, 
+              reduction = "umap.harmony", 
+              label = TRUE,
+              label.size = 3, group.by = "cluster_names_pseudobulk",
+              raster = F) + NoLegend()
+
+p2 <- DotPlot(sarc_atac_integrated, features =  c("CD3E", "CD4", "CD8A", "CCR7", "CD69", "IL2RA", "FOXP3", "KLRB1", "NCAM1", "FCGR3A", "CD19", "MS4A1", "IGHD", "IGHM", "CD27", "CD33", "ITGAM", "CD14", "ITGAX", "CD1C", "IL3RA", "CD34", "IL7R", "MKI67", "CCR4", "CCL5", "ITGA2B"), cluster.idents = T, ) +
+  scale_color_gradient2(low = "blue", mid = "grey90", high = "red") +
+  scale_radius(limits = c(0, 100)) +
+  RotatedAxis() +
+  theme(axis.title.x = element_blank(),
+        axis.title.y = element_blank())
+
+p1 + p3 + p4
+
+#ggsave("output/clustering.pdf", height = 8, width = 24)
+```
+
+### subcluster CD4 T memory cells to get to the Tregs
+
+Tregs may be more difficult to find in ATAC data. Based on the label transfers, clustering the atac data at a resolution of 1 did not split Tregs from other T cell clusters. Because of this, the CD4 T cells were subclustered.
+```{r}
+CD4_memory <- sarc_atac_integrated |> subset(cluster_names1 == "CD4_memory/Treg" |
+                                             cluster_names1 == "CD4_memory" |
+                                             cluster_names1 == "CD4_memory 1")
+
+DefaultAssay(CD4_memory) <- "ATAC"
+CD4_memory <- FindNeighbors(CD4_memory, reduction = "harmony", dims = 2:20)
+CD4_memory <- FindClusters(CD4_memory, resolution = 1, cluster.name = "CD4.subclusters.1.harmony")
+
+DimPlot(CD4_memory, reduction = "umap.harmony", group.by = "CD4.subclusters.1.harmony") +
+DimPlot(CD4_memory, reduction = "umap.harmony", group.by = "predicted.id")
+
+# Labeling our clusters based on transferred labels.
+Idents(CD4_memory) <- CD4_memory$CD4.subclusters.1.harmony
+
+tmp <- tibble(Var1 = "",
+              Freq = 0,
+              cluster_id = 0) |> 
+  slice(-1)
+
+for(i in unique(CD4_memory$CD4.subclusters.1.harmony)) {
+  tmp1 <- table(CD4_memory@meta.data |> 
+                  filter(CD4.subclusters.1.harmony == i) |>
+                  pull(predicted.id)) |>
+    as.data.frame() |>
+    mutate(cluster_id = i)
+  tmp <- rbind(tmp, tmp1)
+}
+
+tmp <- tmp |> 
+  select(Cluster_ID = cluster_id, predicted.id = Var1, Freq) |> 
+  mutate(Cluster_ID = as.integer(Cluster_ID)) |> 
+  arrange(Cluster_ID, desc(Freq))
+
+tmp2 <- tmp |> 
+  group_by(Cluster_ID) |> 
+  summarize(N = sum(Freq))
+
+tmp3 <- tmp |> 
+  left_join(tmp2) |> 
+  mutate(Percent = (Freq / N) * 100) |> 
+  filter(Percent > 20)
+
+tmp4 <- tmp3 |> 
+  select(Cluster_ID, predicted.id) |> 
+  group_by(Cluster_ID) |> 
+  summarise(cluster_names1 = paste(predicted.id, collapse = "/")) |> 
+  mutate(CD4_subcluster_names1 = make.unique(cluster_names1, sep = " "),
+         CD4_subcluster_names1 = factor(cluster_names1),
+         Cluster_ID = factor(Cluster_ID))
+
+CD4_memory@meta.data <- CD4_memory@meta.data |> 
+  rownames_to_column("cell") |> 
+  #select(-c(cluster_names1.x)) |> 
+  left_join(tmp4, by = c("CD4.subclusters.1.harmony" = "Cluster_ID")) |> 
+  as.data.frame() |> 
+  column_to_rownames("cell")
+
+add <- CD4_memory@meta.data |> 
+  rownames_to_column("cell") |> 
+  select(cell, CD4_subcluster_names1) |> 
+  mutate(CD4_subcluster_names1 = case_when(CD4_subcluster_names1 == "CD4_memory/CD4_naive" ~ "CD4_memory",
+                                           TRUE ~ CD4_subcluster_names1))
+
+sarc_atac_integrated@meta.data <- sarc_atac_integrated@meta.data |> 
+  rownames_to_column("cell") |> 
+  left_join(add) |> 
+  column_to_rownames("cell")
+
+
+# sarc_atac_integrated@meta.data <- sarc_atac_integrated@meta.data |>
+#   select(-c(cluster_names1.x, cluster_names1.y, cluster_names1.y.y))
+```
+
+### assign manual pseudobulk cluster names
+clustering and T cell subclustering annotations are merged, these were the annotations used for pseudobulk
+```{r}
+sarc_atac_integrated@meta.data <- sarc_atac_integrated@meta.data |> 
+  mutate(cluster_names_pseudobulk = case_when(cluster_names1 == "CD14_Mono 1" ~ "CD14_Mono",
+                                              cluster_names1 == "CD14_Mono 2" ~ "CD14_Mono",
+                                              cluster_names1 == "excl/CD14_Mono" ~ "excl",
+                                              cluster_names1 == "CD8_memory 1" ~ "CD8_memory",
+                                              cluster_names1 == "CD4_memory" ~ CD4_subcluster_names1,
+                                              cluster_names1 == "CD4_memory/Treg" ~ CD4_subcluster_names1,
+                                              cluster_names1 == "CD4_memory 1" ~ CD4_subcluster_names1,
+                                              cluster_names1 == "CD4_naive 1" ~ "CD4_naive",
+                                              cluster_names1 == "early_NK/NK" ~ "early_NK",
+                                              TRUE ~ cluster_names1
+                                              ))
+```
+
+## prepare pycisTopic ATAC preprocessing
+```{r}
+metadata <- sarc_atac_integrated[[]]
+
+metadata |> 
+  mutate(VSN_sample_id = pool) |> 
+  write_tsv("pycisTopic/cell_data.tsv")
+```
+
+This was followed by pycistopic analysis (jupyter notebook)
