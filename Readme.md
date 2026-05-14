@@ -1,7 +1,7 @@
 # scRNA and scATAC analysis of sarcoidosis patient PBMCs
 This repository contains the code used for the analysis of scRNA and scATAC data generated from the same PBMC samples of 12 sarcoidosis patients and 6 healthy controls. Files are split into major parts of the analysis, starting from cellranger output. Filtered count matrix and cell/biological sample metadata as well as fragments files are submitted at GEO (GSE330562 and GSE330563).
 
-Thanks to [Martin Schlüter](https://gruene.social/@maddin)
+Thanks to [Martin Schlüter](https://gruene.social/@maddin) for teaching me the use of the command line!
 
 ## Outline of each file in order or the performed analysis:
 ### sarcoidosis_rna.qmd:
