@@ -3,7 +3,7 @@ This repository contains the code used for the analysis of scRNA and scATAC data
 
 Thanks to [Martin Schlüter](https://gruene.social/@maddin) for teaching me the use of the command line!
 
-## Outline of each file in order or the performed analysis:
+## Outline of each file in order of the performed analysis:
 ### sarcoidosis_rna.qmd:
 QC-filtering of scRNA-seq cellranger outputs, dimensional reduction, harmony integration and clustering, celltype annotation using marker gene expression and pseudobulk analysis of annotated cell types.
 
